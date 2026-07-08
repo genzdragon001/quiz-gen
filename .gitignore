@@ -1,0 +1,21 @@
+# Dependencies (regenerate with: composer install)
+vendor/
+
+# Sensitive config (use config.example.php as template)
+config/config.php
+
+# Logs (may contain student data)
+logs/
+
+# Hermes Agent local data
+.hermes/
+
+# IDE / OS
+.idea/
+.vscode/
+*.log
+.DS_Store
+Thumbs.db
+
+# Migration artifacts
+seed.zip
