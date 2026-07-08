@@ -72,6 +72,9 @@ CREATE TABLE submissions (
     submitted_at  TIMESTAMP NULL,
     violations    INT NOT NULL DEFAULT 0 COMMENT 'tab-switch count',
     flagged       TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'auto-submitted due to violations',
+    draft_answers JSON DEFAULT NULL COMMENT 'saved answers for resume: {"question_id":"answer"}',
+    current_question INT DEFAULT 0 COMMENT 'last-viewed question index for resume',
+    deadline      DATETIME DEFAULT NULL COMMENT 'started_at + time_limit; used for server-side timer on resume',
     FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE,
     FOREIGN KEY (quiz_id) REFERENCES quizzes(quiz_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

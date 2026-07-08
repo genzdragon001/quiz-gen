@@ -72,7 +72,7 @@ foreach ($questions as $q) {
 
 // Update submission
 $stmt = $pdo->prepare(
-    "UPDATE submissions SET score = ?, total_items = ?, submitted_at = NOW(), violations = ?, flagged = ? WHERE submission_id = ?"
+    "UPDATE submissions SET score = ?, total_items = ?, submitted_at = NOW(), violations = ?, flagged = ?, draft_answers = NULL WHERE submission_id = ?"
 );
 $stmt->execute([$score, $total, $violations, $flagged, $submissionId]);
 

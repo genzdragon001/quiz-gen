@@ -33,6 +33,11 @@ if (!student || !quiz) {
     window.location.href = 'index.php';
 }
 
+// If resuming, skip the email page — go straight to quiz
+if (sessionStorage.getItem('resuming') === '1') {
+    window.location.href = 'quiz.php';
+}
+
 if (student.email) {
     document.getElementById('emailInput').value = student.email;
 }

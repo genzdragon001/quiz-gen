@@ -9,6 +9,9 @@
 </head>
 <body class="quiz-body">
 <div class="quiz-container">
+    <div id="resumeNotice" style="display:none;" class="resume-notice">
+        Welcome back! Your answers and timer have been restored. You can continue from where you left off.
+    </div>
     <div class="quiz-header">
         <h1 id="quizTitle"></h1>
         <div class="quiz-header-right">

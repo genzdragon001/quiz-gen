@@ -44,6 +44,12 @@ if (!score && score !== 0 || !total) {
     }, 300);
 }
 
+// Clear localStorage for this submission (quiz is done — no resume needed)
+var subId = sessionStorage.getItem('submission_id');
+if (subId) {
+    try { localStorage.removeItem('quiz_session_' + subId); } catch(e) {}
+}
+
 // Clear session
 sessionStorage.clear();
 </script>

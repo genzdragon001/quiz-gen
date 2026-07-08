@@ -1,38 +1,99 @@
 // ============================================================
-// Quiz Engine + Anti-Cheat
+// Quiz Engine + Anti-Cheat + Disconnect Recovery
 // ============================================================
 
 // --- State ---
 let questions = [];
 let currentIndex = 0;
-let answers = {};        // { question_id: 'A'|'B'|'C'|'D'|'T'|'F'|null }
+let answers = {};        // { question_id: 'A'|'B'|'C'|'D'|'T'|'F'|text }
 let submissionId = null;
 let quizData = null;
 let timeRemaining = 0;   // seconds
 let timerInterval = null;
 let violations = 0;
 let submitting = false;  // disables anti-cheat during submit
+let autoSaveTimer = null;
+let initialized = false;
 const MAX_VIOLATIONS = 3;
+
+// localStorage keys (per submission so different quizzes don't collide)
+const LS_KEY = 'quiz_session';
+
+function getLSKey() {
+    return LS_KEY + '_' + submissionId;
+}
+
+// Save full session state to localStorage
+function saveToLocal() {
+    if (!submissionId) return;
+    try {
+        localStorage.setItem(getLSKey(), JSON.stringify({
+            submissionId: submissionId,
+            studentId: sessionStorage.getItem('student_id') || '',
+            quizId: sessionStorage.getItem('quiz_id') || '',
+            email: sessionStorage.getItem('email') || '',
+            answers: answers,
+            currentIndex: currentIndex,
+            violations: violations,
+            timeRemaining: timeRemaining,
+            timestamp: Date.now(),
+        }));
+    } catch(e) { /* localStorage may be full or disabled */ }
+}
+
+// Clear localStorage for this session
+function clearLocal() {
+    if (!submissionId) return;
+    try {
+        localStorage.removeItem(getLSKey());
+    } catch(e) {}
+}
+
+// Auto-save to server (fire-and-forget)
+function autoSave() {
+    if (!submissionId || submitting) return;
+    const form = new FormData();
+    form.append('submission_id', submissionId);
+    form.append('answers', JSON.stringify(answers));
+    form.append('violations', violations);
+    form.append('current_question', currentIndex);
+
+    fetch('../api/student/auto-save.php', { method: 'POST', body: form })
+        .catch(() => {}); // silent — don't interrupt the student
+}
 
 // --- Init ---
 (async function init() {
     const student = JSON.parse(sessionStorage.getItem('student'));
     const quiz = JSON.parse(sessionStorage.getItem('quiz'));
     const email = sessionStorage.getItem('email');
+    const resumeSubmissionId = sessionStorage.getItem('submission_id');
 
     if (!student || !quiz || !email) {
         window.location.href = 'index.php';
         return;
     }
 
-    // Start quiz on server
+    // Start quiz on server (or resume)
     const form = new FormData();
     form.append('student_id', student.student_id);
     form.append('quiz_id', quiz.quiz_id);
     form.append('email', email);
+    if (resumeSubmissionId) {
+        form.append('submission_id', resumeSubmissionId);
+    }
 
     const resp = await fetch('../api/student/start-quiz.php', { method: 'POST', body: form });
     const data = await resp.json();
+
+    // If time expired while away, server auto-submitted — go to results
+    if (data.expired) {
+        sessionStorage.setItem('score', data.score);
+        sessionStorage.setItem('total', data.total);
+        clearLocal();
+        window.location.href = 'result.php';
+        return;
+    }
 
     if (!data.success) {
         alert(data.error);
@@ -43,7 +104,26 @@ const MAX_VIOLATIONS = 3;
     questions = data.questions;
     submissionId = data.submission_id;
     quizData = data.quiz;
-    timeRemaining = quizData.time_limit_minutes * 60;
+    initialized = true;
+
+    // Restore saved state on resume
+    if (data.resumed) {
+        answers = data.draft_answers || {};
+        violations = data.violations || 0;
+        currentIndex = Math.min(data.current_question || 0, questions.length - 1);
+        timeRemaining = data.time_remaining || quizData.time_limit_minutes * 60;
+
+        // Show resume notice
+        const notice = document.getElementById('resumeNotice');
+        if (notice) notice.style.display = 'block';
+    } else {
+        timeRemaining = data.time_remaining || quizData.time_limit_minutes * 60;
+    }
+
+    // Store IDs in sessionStorage for cross-page persistence
+    sessionStorage.setItem('student_id', student.student_id);
+    sessionStorage.setItem('quiz_id', quiz.quiz_id);
+    sessionStorage.setItem('submission_id', submissionId);
 
     document.getElementById('quizTitle').textContent = quizData.title;
     document.getElementById('totalQ').textContent = questions.length;
@@ -53,12 +133,26 @@ const MAX_VIOLATIONS = 3;
         return;
     }
 
+    // If there are saved violations, show the warning
+    if (violations > 0 && violations < MAX_VIOLATIONS) {
+        const warning = document.getElementById('violationWarning');
+        warning.textContent = 'WARNING: Tab switch detected! (' + violations + '/' + MAX_VIOLATIONS + ')';
+        warning.style.display = 'block';
+    }
+
     renderQuestion();
     startTimer();
     setupAntiCheat();
     updateProgressBar();
+
+    // Start auto-save every 15 seconds
+    autoSaveTimer = setInterval(autoSave, 15000);
+
+    // Save to localStorage on every answer change and navigation
+    // (handled inside setAnswer and navigation handlers)
 })();
 
+// --- Progress Bar ---
 function updateProgressBar() {
     const pct = ((currentIndex + 1) / questions.length) * 100;
     const bar = document.getElementById('quizProgressBar');
@@ -122,16 +216,20 @@ function renderQuestion() {
         document.getElementById('submitBtn').style.display = 'none';
     }
     updateProgressBar();
+
+    // Save current position to localStorage
+    saveToLocal();
 }
 
 function setAnswer(questionId, value) {
     answers[questionId] = value;
-    // Only re-render for radio-type questions (MCQ/TF); for identification, keep focus
     const q = questions[currentIndex];
     const qType = q.question_type || quizData.type;
     if (qType !== 'IDENTIFICATION') {
         renderQuestion();
     }
+    // Save to localStorage on every answer
+    saveToLocal();
 }
 
 // --- Navigation ---
@@ -177,11 +275,16 @@ function startTimer() {
         updateTimerDisplay();
         if (timeRemaining <= 0) {
             clearInterval(timerInterval);
+            clearInterval(autoSaveTimer);
             submitting = true;
             const btn = document.getElementById('submitBtn');
             if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
             alert('Time is up! Your quiz will be submitted automatically.');
             submitQuiz();
+        }
+        // Save time to localStorage every 5 seconds
+        if (timeRemaining % 5 === 0) {
+            saveToLocal();
         }
     }, 1000);
 }
@@ -227,7 +330,7 @@ function setupAntiCheat() {
     let isAway = false;
 
     function handleAway() {
-        if (!isAway && !submitting) {
+        if (!isAway && !submitting && initialized) {
             isAway = true;
             recordViolation();
         }
@@ -253,6 +356,22 @@ function setupAntiCheat() {
     window.addEventListener('focus', () => {
         handleReturn();
     });
+
+    // Save state before page unload (refresh/close) — fire-and-forget
+    window.addEventListener('beforeunload', () => {
+        if (!submitting && submissionId) {
+            saveToLocal();
+            // Fire auto-save via sendBeacon (works during unload)
+            const payload = new FormData();
+            payload.append('submission_id', submissionId);
+            payload.append('answers', JSON.stringify(answers));
+            payload.append('violations', violations);
+            payload.append('current_question', currentIndex);
+            try {
+                navigator.sendBeacon('../api/student/auto-save.php', payload);
+            } catch(e) {}
+        }
+    });
 }
 
 function recordViolation() {
@@ -261,9 +380,14 @@ function recordViolation() {
     warning.textContent = `WARNING: Tab switch detected! (${violations}/${MAX_VIOLATIONS})`;
     warning.style.display = 'block';
 
+    // Save state immediately on violation
+    saveToLocal();
+    autoSave();
+
     if (violations >= MAX_VIOLATIONS) {
         warning.textContent = 'Maximum violations reached. Quiz auto-submitted.';
         clearInterval(timerInterval);
+        clearInterval(autoSaveTimer);
         submitting = true;
         const btn = document.getElementById('submitBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
@@ -274,6 +398,7 @@ function recordViolation() {
 // --- Submit ---
 async function submitQuiz(flagged = false) {
     clearInterval(timerInterval);
+    clearInterval(autoSaveTimer);
 
     const form = new FormData();
     form.append('submission_id', submissionId);
@@ -287,8 +412,12 @@ async function submitQuiz(flagged = false) {
     if (data.success) {
         sessionStorage.setItem('score', data.score);
         sessionStorage.setItem('total', data.total);
+        clearLocal();
         window.location.href = 'result.php';
     } else {
         alert('Error submitting quiz: ' + data.error);
+        submitting = false;
+        const btn = document.getElementById('submitBtn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit Quiz'; }
     }
 }

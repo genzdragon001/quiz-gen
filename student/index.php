@@ -19,8 +19,16 @@ $prefillCode = isset($_GET['code']) ? preg_replace('/[^0-9]/', '', $_GET['code']
         <span class="step">3</span>
     </div>
     <h1><?= APP_NAME ?></h1>
+
+    <!-- Resume banner (shown if quiz.js saved state to localStorage) -->
+    <div id="resumeBanner" style="display:none;" class="resume-banner">
+        <p id="resumeText"></p>
+        <button type="button" id="resumeBtn" class="btn-resume">Resume Quiz</button>
+        <button type="button" id="discardBtn" class="btn-discard">Start New</button>
+    </div>
+
     <form id="verifyForm">
-        <label>Student ID <input type="text" name="student_id" required <?= $prefillCode ? '' : 'autofocus' ?>></label>
+        <label>Student ID <input type="text" name="student_id" id="studentIdInput" required <?= $prefillCode ? '' : 'autofocus' ?>></label>
         <label>Quiz Code <input type="text" name="quiz_code" id="quizCodeInput" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required placeholder="4-digit code" value="<?= htmlspecialchars($prefillCode) ?>" <?= $prefillCode ? 'autofocus' : '' ?>></label>
 
         <div class="anti-cheat-notice">
@@ -32,6 +40,7 @@ $prefillCode = isset($_GET['code']) ? preg_replace('/[^0-9]/', '', $_GET['code']
                 <li>You are allowed a maximum of 3 tab-switch violations.</li>
                 <li>On the 3rd violation, your quiz will be automatically submitted and flagged.</li>
                 <li>A timer runs during the quiz &mdash; it auto-submits when time is up.</li>
+                <li>If you lose connection or accidentally close the tab, you can resume from where you left off (as long as time hasn't expired and you haven't exhausted violations).</li>
             </ul>
             <label class="agree-label">
                 <input type="checkbox" id="agreeCheckbox" required>
@@ -53,6 +62,53 @@ agreeCheckbox.addEventListener('change', function() {
     startBtn.disabled = !this.checked;
 });
 
+// Check for saved quiz sessions in localStorage (from a previous tab close/refresh)
+(function checkForResume() {
+    var foundKey = null;
+    var foundData = null;
+    try {
+        for (var i = 0; i < localStorage.length; i++) {
+            var key = localStorage.key(i);
+            if (key && key.indexOf('quiz_session_') === 0) {
+                var raw = localStorage.getItem(key);
+                var data = JSON.parse(raw);
+                if (data && data.submissionId) {
+                    foundKey = key;
+                    foundData = data;
+                    break;
+                }
+            }
+        }
+    } catch(e) { return; }
+
+    if (foundData) {
+        var banner = document.getElementById('resumeBanner');
+        var text = document.getElementById('resumeText');
+        banner.style.display = 'block';
+        text.textContent = 'You have an unfinished quiz. Would you like to resume?';
+        startBtn.disabled = true;
+        agreeCheckbox.disabled = true;
+
+        document.getElementById('resumeBtn').addEventListener('click', function() {
+            // Store the resume info in sessionStorage — email.php and quiz.php will use it
+            sessionStorage.setItem('student', JSON.stringify({ student_id: foundData.studentId }));
+            sessionStorage.setItem('quiz', JSON.stringify({ quiz_id: foundData.quizId }));
+            sessionStorage.setItem('email', foundData.email);
+            sessionStorage.setItem('submission_id', foundData.submissionId);
+            sessionStorage.setItem('resuming', '1');
+            window.location.href = 'quiz.php';
+        });
+
+        document.getElementById('discardBtn').addEventListener('click', function() {
+            try { localStorage.removeItem(foundKey); } catch(e) {}
+            banner.style.display = 'none';
+            startBtn.disabled = true;
+            agreeCheckbox.disabled = false;
+            agreeCheckbox.checked = false;
+        });
+    }
+})();
+
 document.getElementById('verifyForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = new FormData(e.target);
@@ -62,7 +118,17 @@ document.getElementById('verifyForm').addEventListener('submit', async (e) => {
     if (data.success) {
         sessionStorage.setItem('student', JSON.stringify(data.student));
         sessionStorage.setItem('quiz', JSON.stringify(data.quiz));
-        window.location.href = 'email.php';
+
+        if (data.can_resume) {
+            // Server says there's an in-progress submission — go directly to quiz
+            sessionStorage.setItem('submission_id', data.submission_id);
+            sessionStorage.setItem('resuming', '1');
+            window.location.href = 'quiz.php';
+        } else {
+            sessionStorage.removeItem('submission_id');
+            sessionStorage.removeItem('resuming');
+            window.location.href = 'email.php';
+        }
     } else {
         const err = document.getElementById('error');
         err.textContent = data.error;

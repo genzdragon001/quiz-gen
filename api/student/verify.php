@@ -56,12 +56,27 @@ if ($quiz['available_until'] && $now > $quiz['available_until']) {
     exit;
 }
 
-// Check if student already submitted this quiz
-$stmt = $pdo->prepare("SELECT 1 FROM submissions WHERE student_id = ? AND quiz_id = ?");
+// Check if student already has a submission for this quiz
+$stmt = $pdo->prepare("SELECT submission_id, submitted_at FROM submissions WHERE student_id = ? AND quiz_id = ?");
 $stmt->execute([$studentId, $quiz['quiz_id']]);
-if ($stmt->fetch()) {
-    http_response_code(409);
-    echo json_encode(['error' => 'You have already taken this quiz']);
+$existing = $stmt->fetch();
+
+if ($existing) {
+    if ($existing['submitted_at']) {
+        // Already completed — cannot retake
+        http_response_code(409);
+        echo json_encode(['error' => 'You have already taken this quiz']);
+        exit;
+    }
+    // Unsubmitted = in-progress. Allow resume.
+    echo json_encode([
+        'success'       => true,
+        'student'       => $student,
+        'quiz'          => $quiz,
+        'has_email'     => !empty($student['email']),
+        'can_resume'    => true,
+        'submission_id' => (int)$existing['submission_id'],
+    ]);
     exit;
 }
 
