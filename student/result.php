@@ -12,7 +12,7 @@
     <h1>Quiz Completed!</h1>
     <div class="score-display" id="scoreDisplay">
         <p class="score-label">Your Score</p>
-        <h2 id="scoreText"></h2>
+        <h2 id="scoreText">--</h2>
         <p id="percentageText" class="percentage-text"></p>
         <div class="score-bar-container">
             <div class="score-bar" id="scoreBar"></div>
@@ -23,35 +23,71 @@
 </div>
 
 <script>
-const score = parseInt(sessionStorage.getItem('score'));
-const total = parseInt(sessionStorage.getItem('total'));
+(async function() {
+    const subId = sessionStorage.getItem('submission_id');
+    const studentId = sessionStorage.getItem('student_id');
 
-if (!score && score !== 0 || !total) {
-    window.location.href = 'index.php';
-} else {
-    const pct = Math.round((score / total) * 100);
-    document.getElementById('scoreText').textContent = score + ' / ' + total;
-    document.getElementById('percentageText').textContent = pct + '%';
+    if (!subId) {
+        window.location.href = 'index.php';
+        return;
+    }
 
-    // Animate the score bar
-    setTimeout(function() {
-        document.getElementById('scoreBar').style.width = pct + '%';
-        if (pct >= 75) {
-            document.getElementById('scoreBar').classList.add('score-bar-pass');
-        } else {
-            document.getElementById('scoreBar').classList.add('score-bar-fail');
+    // Fetch score from server (authoritative source)
+    try {
+        const form = new FormData();
+        form.append('submission_id', subId);
+        if (studentId) form.append('student_id', studentId);
+
+        const resp = await fetch('../api/student/result.php', { method: 'POST', body: form });
+        if (!resp.ok) {
+            // Fall back to sessionStorage if server call fails
+            showFromSession();
+            return;
         }
-    }, 300);
-}
+        const data = await resp.json();
+        if (data.success) {
+            showScore(data.score, data.total);
+        } else {
+            showFromSession();
+        }
+    } catch(e) {
+        showFromSession();
+    }
 
-// Clear localStorage for this submission (quiz is done — no resume needed)
-var subId = sessionStorage.getItem('submission_id');
-if (subId) {
-    try { localStorage.removeItem('quiz_session_' + subId); } catch(e) {}
-}
+    function showFromSession() {
+        const score = parseInt(sessionStorage.getItem('score'));
+        const total = parseInt(sessionStorage.getItem('total'));
+        if ((!score && score !== 0) || !total) {
+            window.location.href = 'index.php';
+            return;
+        }
+        showScore(score, total);
+    }
 
-// Clear session
-sessionStorage.clear();
+    function showScore(score, total) {
+        const pct = Math.round((score / total) * 100);
+        document.getElementById('scoreText').textContent = score + ' / ' + total;
+        document.getElementById('percentageText').textContent = pct + '%';
+
+        // Animate the score bar
+        setTimeout(function() {
+            document.getElementById('scoreBar').style.width = pct + '%';
+            if (pct >= 75) {
+                document.getElementById('scoreBar').classList.add('score-bar-pass');
+            } else {
+                document.getElementById('scoreBar').classList.add('score-bar-fail');
+            }
+        }, 300);
+    }
+
+    // Clear localStorage for this submission (quiz is done — no resume needed)
+    if (subId) {
+        try { localStorage.removeItem('quiz_session_' + subId); } catch(e) {}
+    }
+
+    // Clear session
+    sessionStorage.clear();
+})();
 </script>
 </body>
 </html>

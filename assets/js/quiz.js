@@ -14,7 +14,9 @@ let violations = 0;
 let submitting = false;  // disables anti-cheat during submit
 let autoSaveTimer = null;
 let initialized = false;
-const MAX_VIOLATIONS = 3;
+let studentId = '';      // for identity verification on API calls
+let savingProgressInterval = null; // progress bar interval for saving overlay
+const MAX_VIOLATIONS = (typeof window.QUIZ_MAX_VIOLATIONS !== 'undefined') ? window.QUIZ_MAX_VIOLATIONS : 3;
 
 // localStorage keys (per submission so different quizzes don't collide)
 const LS_KEY = 'quiz_session';
@@ -23,13 +25,41 @@ function getLSKey() {
     return LS_KEY + '_' + submissionId;
 }
 
+// --- XSS escape helper ---
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+// --- Shared fetchJson wrapper ---
+async function fetchJson(url, options = {}) {
+    try {
+        const resp = await fetch(url, options);
+        if (!resp.ok) {
+            let err;
+            try { err = (await resp.json()).error || 'HTTP ' + resp.status; }
+            catch(e) { err = 'HTTP ' + resp.status; }
+            throw new Error(err);
+        }
+        return await resp.json();
+    } catch(e) {
+        console.error('fetchJson error:', e);
+        throw e;
+    }
+}
+
 // Save full session state to localStorage
 function saveToLocal() {
     if (!submissionId) return;
     try {
         localStorage.setItem(getLSKey(), JSON.stringify({
             submissionId: submissionId,
-            studentId: sessionStorage.getItem('student_id') || '',
+            studentId: studentId,
             quizId: sessionStorage.getItem('quiz_id') || '',
             email: sessionStorage.getItem('email') || '',
             answers: answers,
@@ -57,6 +87,7 @@ function autoSave() {
     form.append('answers', JSON.stringify(answers));
     form.append('violations', violations);
     form.append('current_question', currentIndex);
+    form.append('student_id', studentId);
 
     fetch('../api/student/auto-save.php', { method: 'POST', body: form })
         .catch(() => {}); // silent — don't interrupt the student
@@ -74,6 +105,8 @@ function autoSave() {
         return;
     }
 
+    studentId = student.student_id;
+
     // Start quiz on server (or resume)
     const form = new FormData();
     form.append('student_id', student.student_id);
@@ -83,8 +116,14 @@ function autoSave() {
         form.append('submission_id', resumeSubmissionId);
     }
 
-    const resp = await fetch('../api/student/start-quiz.php', { method: 'POST', body: form });
-    const data = await resp.json();
+    let data;
+    try {
+        data = await fetchJson('../api/student/start-quiz.php', { method: 'POST', body: form });
+    } catch(e) {
+        alert('Failed to start quiz: ' + e.message);
+        window.location.href = 'index.php';
+        return;
+    }
 
     // If time expired while away, server auto-submitted — go to results
     if (data.expired) {
@@ -141,22 +180,67 @@ function autoSave() {
     }
 
     renderQuestion();
+    renderNavigator();
     startTimer();
     setupAntiCheat();
     updateProgressBar();
 
     // Start auto-save every 15 seconds
     autoSaveTimer = setInterval(autoSave, 15000);
-
-    // Save to localStorage on every answer change and navigation
-    // (handled inside setAnswer and navigation handlers)
 })();
 
 // --- Progress Bar ---
 function updateProgressBar() {
-    const pct = ((currentIndex + 1) / questions.length) * 100;
+    const answered = questions.filter(q => answers[q.question_id]).length;
+    const pct = (answered / questions.length) * 100;
     const bar = document.getElementById('quizProgressBar');
     if (bar) bar.style.width = pct + '%';
+}
+
+// --- Navigator ---
+function renderNavigator() {
+    const grid = document.getElementById('navigatorGrid');
+    if (!grid) return;
+
+    grid.innerHTML = questions.map((q, i) => {
+        const isAnswered = !!answers[q.question_id];
+        const isCurrent = i === currentIndex;
+        const classes = ['nav-cell'];
+        if (isAnswered) classes.push('answered');
+        if (isCurrent) classes.push('current');
+        return '<div class="' + classes.join(' ') + '" onclick="jumpTo(' + i + ')" role="button" tabindex="0" aria-label="Question ' + (i + 1) + '">' + (i + 1) + '</div>';
+    }).join('');
+
+    updateNavigatorSummary();
+}
+
+function updateNavigator() {
+    const cells = document.querySelectorAll('.nav-cell');
+    cells.forEach((cell, i) => {
+        const q = questions[i];
+        const isAnswered = !!answers[q.question_id];
+        const isCurrent = i === currentIndex;
+
+        cell.classList.toggle('answered', isAnswered);
+        cell.classList.toggle('current', isCurrent);
+    });
+    updateNavigatorSummary();
+}
+
+function updateNavigatorSummary() {
+    const answered = questions.filter(q => answers[q.question_id]).length;
+    const unanswered = questions.length - answered;
+    const answeredEl = document.getElementById('answeredCount');
+    const unansweredEl = document.getElementById('unansweredCount');
+    if (answeredEl) answeredEl.textContent = answered;
+    if (unansweredEl) unansweredEl.textContent = unanswered;
+}
+
+function jumpTo(index) {
+    if (index < 0 || index >= questions.length) return;
+    currentIndex = index;
+    renderQuestion();
+    updateNavigator();
 }
 
 // --- Render ---
@@ -173,23 +257,21 @@ function renderQuestion() {
     const qType = q.question_type || quizData.type;
 
     if (qType === 'TF') {
-        container.innerHTML = `
-            <label class="option ${savedAnswer === 'T' ? 'selected' : ''}">
-                <input type="radio" name="answer" value="T" ${savedAnswer === 'T' ? 'checked' : ''}
-                       onchange="setAnswer(${q.question_id}, 'T')"> True
-            </label>
-            <label class="option ${savedAnswer === 'F' ? 'selected' : ''}">
-                <input type="radio" name="answer" value="F" ${savedAnswer === 'F' ? 'checked' : ''}
-                       onchange="setAnswer(${q.question_id}, 'F')"> False
-            </label>
-        `;
+        container.innerHTML =
+            '<label class="option ' + (savedAnswer === 'T' ? 'selected' : '') + '">' +
+                '<input type="radio" name="answer" value="T" ' + (savedAnswer === 'T' ? 'checked' : '') +
+                       ' onchange="setAnswer(' + q.question_id + ', \'T\')"> True' +
+            '</label>' +
+            '<label class="option ' + (savedAnswer === 'F' ? 'selected' : '') + '">' +
+                '<input type="radio" name="answer" value="F" ' + (savedAnswer === 'F' ? 'checked' : '') +
+                       ' onchange="setAnswer(' + q.question_id + ', \'F\')"> False' +
+            '</label>';
     } else if (qType === 'IDENTIFICATION') {
-        container.innerHTML = `
-            <input type="text" class="ident-input" id="identInput"
-                   placeholder="Type your answer here"
-                   value="${savedAnswer ? savedAnswer.replace(/"/g, '&quot;') : ''}"
-                   oninput="setAnswer(${q.question_id}, this.value)">
-        `;
+        container.innerHTML =
+            '<input type="text" class="ident-input" id="identInput"' +
+                   ' placeholder="Type your answer here"' +
+                   ' value="' + (savedAnswer ? escapeHtml(savedAnswer) : '') + '"' +
+                   ' oninput="setAnswer(' + q.question_id + ', this.value)">';
     } else {
         // MCQ (default)
         const options = [
@@ -198,24 +280,34 @@ function renderQuestion() {
             { key: 'C', text: q.option_c },
             { key: 'D', text: q.option_d },
         ];
-        container.innerHTML = options.map(o => `
-            <label class="option ${savedAnswer === o.key ? 'selected' : ''}">
-                <input type="radio" name="answer" value="${o.key}" ${savedAnswer === o.key ? 'checked' : ''}
-                       onchange="setAnswer(${q.question_id}, '${o.key}')"> ${o.key}. ${o.text}
-            </label>
-        `).join('');
+        container.innerHTML = options.map(o =>
+            '<label class="option ' + (savedAnswer === o.key ? 'selected' : '') + '">' +
+                '<input type="radio" name="answer" value="' + o.key + '" ' + (savedAnswer === o.key ? 'checked' : '') +
+                       ' onchange="setAnswer(' + q.question_id + ', \'' + o.key + '\')"> ' + o.key + '. ' + escapeHtml(o.text) +
+            '</label>'
+        ).join('');
     }
 
     // Nav buttons
     document.getElementById('prevBtn').disabled = currentIndex === 0;
-    if (currentIndex === questions.length - 1) {
+    const hasAnswer = !!answers[q.question_id];
+    const isLast = currentIndex === questions.length - 1;
+
+    if (isLast) {
         document.getElementById('nextBtn').style.display = 'none';
+        document.getElementById('skipBtn').style.display = 'none';
         document.getElementById('submitBtn').style.display = 'inline-block';
-    } else {
+    } else if (hasAnswer) {
         document.getElementById('nextBtn').style.display = 'inline-block';
+        document.getElementById('skipBtn').style.display = 'none';
+        document.getElementById('submitBtn').style.display = 'none';
+    } else {
+        document.getElementById('nextBtn').style.display = 'none';
+        document.getElementById('skipBtn').style.display = 'inline-block';
         document.getElementById('submitBtn').style.display = 'none';
     }
     updateProgressBar();
+    updateNavigator();
 
     // Save current position to localStorage
     saveToLocal();
@@ -228,6 +320,9 @@ function setAnswer(questionId, value) {
     if (qType !== 'IDENTIFICATION') {
         renderQuestion();
     }
+    // Update navigator and progress bar on every answer
+    updateNavigator();
+    updateProgressBar();
     // Save to localStorage on every answer
     saveToLocal();
 }
@@ -247,25 +342,117 @@ document.getElementById('nextBtn').addEventListener('click', () => {
     }
 });
 
+document.getElementById('skipBtn').addEventListener('click', () => {
+    if (currentIndex < questions.length - 1) {
+        currentIndex++;
+        renderQuestion();
+    } else {
+        // On the last question, skip jumps to submit
+        document.getElementById('submitBtn').style.display = 'inline-block';
+        document.getElementById('nextBtn').style.display = 'none';
+    }
+});
+
 document.getElementById('submitBtn').addEventListener('click', () => {
     submitting = true; // prevent confirm() dialog from triggering violations
-    const btn = document.getElementById('submitBtn');
-    const unanswered = questions.filter(q => !answers[q.question_id]).length;
-    if (unanswered > 0) {
-        if (!confirm(`You have ${unanswered} unanswered question(s). Submit anyway?`)) {
-            submitting = false;
-            return;
-        }
-    } else {
-        if (!confirm('Submit your quiz? You cannot change answers after submission.')) {
-            submitting = false;
-            return;
-        }
-    }
-    btn.disabled = true;
-    btn.textContent = 'Submitting...';
-    submitQuiz();
+    showSubmitConfirmation();
 });
+
+// --- Submit Confirmation Modal ---
+function showSubmitConfirmation() {
+    const unanswered = questions.filter(q => !answers[q.question_id]);
+    const unansweredCount = unanswered.length;
+    const modal = document.getElementById('submitModal');
+    const title = document.getElementById('submitModalTitle');
+    const message = document.getElementById('submitModalMessage');
+    const listDiv = document.getElementById('submitModalUnansweredList');
+
+    if (unansweredCount > 0) {
+        title.textContent = 'You have unanswered questions!';
+        message.innerHTML = 'You have <strong style="color:var(--danger);">' + unansweredCount + '</strong> unanswered question(s). ' +
+            'Highlighted in red on the side. Are you sure you want to submit?';
+        // Show which question numbers are unanswered
+        const unansweredNums = unanswered.map(q => questions.indexOf(q) + 1);
+        listDiv.innerHTML = '<span class="submit-unanswered-label">Unanswered questions:</span> ' +
+            unansweredNums.map(n => '<span class="submit-unanswered-badge">' + n + '</span>').join(' ');
+        listDiv.style.display = 'block';
+    } else {
+        title.textContent = 'Submit Quiz?';
+        message.textContent = 'You have answered all questions. Are you sure you want to submit? You cannot change answers after submission.';
+        listDiv.style.display = 'none';
+    }
+
+    // Highlight unanswered nav cells red
+    highlightUnansweredNav();
+
+    modal.style.display = 'flex';
+
+    document.getElementById('submitCancelBtn').onclick = function() {
+        modal.style.display = 'none';
+        clearUnansweredHighlight();
+        submitting = false;
+    };
+
+    document.getElementById('submitConfirmBtn').onclick = function() {
+        modal.style.display = 'none';
+        clearUnansweredHighlight();
+        doSubmitQuiz(false);
+    };
+}
+
+// Highlight unanswered navigator cells in red
+function highlightUnansweredNav() {
+    const cells = document.querySelectorAll('.nav-cell');
+    cells.forEach((cell, i) => {
+        const q = questions[i];
+        if (!answers[q.question_id]) {
+            cell.classList.add('unanswered-warn');
+        }
+    });
+}
+
+// Clear red highlight
+function clearUnansweredHighlight() {
+    document.querySelectorAll('.nav-cell.unanswered-warn').forEach(c => c.classList.remove('unanswered-warn'));
+}
+
+// --- Saving Overlay ---
+function showSavingOverlay() {
+    const overlay = document.getElementById('savingOverlay');
+    const bar = document.getElementById('savingProgressBar');
+    overlay.style.display = 'flex';
+    bar.style.width = '0%';
+
+    // Animate progress to 90% over ~3 seconds (hold at 90% until server responds)
+    let pct = 0;
+    savingProgressInterval = setInterval(() => {
+        if (pct < 90) {
+            pct += Math.random() * 8 + 2;
+            if (pct > 90) pct = 90;
+            bar.style.width = pct + '%';
+        }
+    }, 150);
+}
+
+function completeSavingOverlay() {
+    const bar = document.getElementById('savingProgressBar');
+    if (bar) bar.style.width = '100%';
+    clearInterval(savingProgressInterval);
+}
+
+// Actual submit
+function doSubmitQuiz(flagged) {
+    const btn = document.getElementById('submitBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+    showSavingOverlay();
+    // Use requestAnimationFrame + small timeout to ensure the overlay paints
+    // before the async fetch begins
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            submitQuiz(flagged);
+        });
+    });
+}
 
 // --- Timer ---
 function startTimer() {
@@ -280,7 +467,7 @@ function startTimer() {
             const btn = document.getElementById('submitBtn');
             if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
             alert('Time is up! Your quiz will be submitted automatically.');
-            submitQuiz();
+            doSubmitQuiz(false);
         }
         // Save time to localStorage every 5 seconds
         if (timeRemaining % 5 === 0) {
@@ -367,6 +554,7 @@ function setupAntiCheat() {
             payload.append('answers', JSON.stringify(answers));
             payload.append('violations', violations);
             payload.append('current_question', currentIndex);
+            payload.append('student_id', studentId);
             try {
                 navigator.sendBeacon('../api/student/auto-save.php', payload);
             } catch(e) {}
@@ -377,7 +565,7 @@ function setupAntiCheat() {
 function recordViolation() {
     violations++;
     const warning = document.getElementById('violationWarning');
-    warning.textContent = `WARNING: Tab switch detected! (${violations}/${MAX_VIOLATIONS})`;
+    warning.textContent = 'WARNING: Tab switch detected! (' + violations + '/' + MAX_VIOLATIONS + ')';
     warning.style.display = 'block';
 
     // Save state immediately on violation
@@ -391,7 +579,7 @@ function recordViolation() {
         submitting = true;
         const btn = document.getElementById('submitBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
-        submitQuiz(true); // flagged
+        doSubmitQuiz(true); // flagged
     }
 }
 
@@ -402,20 +590,33 @@ async function submitQuiz(flagged = false) {
 
     const form = new FormData();
     form.append('submission_id', submissionId);
+    form.append('student_id', studentId);
     form.append('answers', JSON.stringify(answers));
     form.append('violations', violations);
     form.append('flagged', flagged ? '1' : '0');
 
-    const resp = await fetch('../api/student/submit-quiz.php', { method: 'POST', body: form });
-    const data = await resp.json();
+    try {
+        const data = await fetchJson('../api/student/submit-quiz.php', { method: 'POST', body: form });
 
-    if (data.success) {
-        sessionStorage.setItem('score', data.score);
-        sessionStorage.setItem('total', data.total);
-        clearLocal();
-        window.location.href = 'result.php';
-    } else {
-        alert('Error submitting quiz: ' + data.error);
+        if (data.success) {
+            completeSavingOverlay();
+            sessionStorage.setItem('score', data.score);
+            sessionStorage.setItem('total', data.total);
+            clearLocal();
+            // Brief delay so student sees 100% progress bar
+            setTimeout(() => { window.location.href = 'result.php'; }, 600);
+        } else {
+            completeSavingOverlay();
+            document.getElementById('savingOverlay').style.display = 'none';
+            alert('Error submitting quiz: ' + data.error);
+            submitting = false;
+            const btn = document.getElementById('submitBtn');
+            if (btn) { btn.disabled = false; btn.textContent = 'Submit Quiz'; }
+        }
+    } catch(e) {
+        completeSavingOverlay();
+        document.getElementById('savingOverlay').style.display = 'none';
+        alert('Network error submitting quiz. Please try again.');
         submitting = false;
         const btn = document.getElementById('submitBtn');
         if (btn) { btn.disabled = false; btn.textContent = 'Submit Quiz'; }

@@ -25,7 +25,6 @@ if ($quiz['type'] === 'MIXED') {
     if ((int)$quiz['num_mcq'] > 0)           $quizTypes[] = 'MCQ';
     if ((int)$quiz['num_tf'] > 0)            $quizTypes[] = 'TF';
     if ((int)$quiz['num_identification'] > 0) $quizTypes[] = 'IDENTIFICATION';
-    // If all are 0 (legacy mixed quiz), show all checked
     if (empty($quizTypes)) $quizTypes = ['MCQ', 'TF', 'IDENTIFICATION'];
 } else {
     $quizTypes[] = $quiz['type'];
@@ -44,6 +43,7 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
 
 <!-- Quiz settings form -->
 <form id="quizSettings">
+    <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
     <input type="hidden" name="quiz_id" value="<?= $quiz['quiz_id'] ?>">
     <label>Title: <input type="text" name="title" value="<?= htmlspecialchars($quiz['title']) ?>" required></label>
 
@@ -63,9 +63,9 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
         </div>
     </fieldset>
 
-    <label>Time Limit (min): <input type="number" name="time_limit_minutes" value="<?= $quiz['time_limit_minutes'] ?>" min="1"></label>
-    <label>Available From: <input type="datetime-local" name="available_from" value="<?= $quiz['available_from'] ? date('Y-m-d\TH:i', strtotime($quiz['available_from'])) : '' ?>"></label>
-    <label>Available Until: <input type="datetime-local" name="available_until" value="<?= $quiz['available_until'] ? date('Y-m-d\TH:i', strtotime($quiz['available_until'])) : '' ?>"></label>
+    <label>Time Limit (min): <input type="number" name="time_limit_minutes" value="<?= $quiz['time_limit_minutes'] ?>" min="1" max="600"></label>
+    <label>Available From: <input type="datetime-local" name="available_from" value="<?= $quiz['available_from'] ? date('Y-m-d\\TH:i', strtotime($quiz['available_from'])) : '' ?>"> <small>(Asia/Manila time)</small></label>
+    <label>Available Until: <input type="datetime-local" name="available_until" value="<?= $quiz['available_until'] ? date('Y-m-d\\TH:i', strtotime($quiz['available_until'])) : '' ?>"> <small>(Asia/Manila time)</small></label>
     <label><input type="checkbox" name="is_active" <?= $quiz['is_active'] ? 'checked' : '' ?>> Active</label>
     <button type="submit">Save Settings</button>
 </form>
@@ -76,12 +76,12 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
 <!-- Add question form -->
 <h2>Add Question</h2>
 <form id="questionForm">
+    <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
     <input type="hidden" name="quiz_id" value="<?= $quiz['quiz_id'] ?>">
     <input type="hidden" name="quiz_type" id="quizType" value="<?= $quiz['type'] ?>">
     <label>Question: <textarea name="question_text" required></textarea></label>
 
     <?php if ($quiz['type'] === 'MIXED'): ?>
-    <!-- Per-question type selector for MIXED quizzes -->
     <label>Question Type:
         <select name="question_type" id="questionTypeSelect" required>
             <option value="MCQ">Multiple Choice</option>
@@ -116,7 +116,6 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
     </div>
 
     <script>
-    // Toggle which fields show based on selected question type (MIXED quizzes only)
     (function() {
         const select = document.getElementById('questionTypeSelect');
         const mcqFields = document.getElementById('mcqFields');
@@ -131,8 +130,6 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
             mcqFields.style.display = t === 'MCQ' ? '' : 'none';
             tfFields.style.display = t === 'TF' ? '' : 'none';
             identFields.style.display = t === 'IDENTIFICATION' ? '' : 'none';
-
-            // Toggle required attributes so only visible fields are required
             mcqAnswer.required = (t === 'MCQ');
             tfAnswer.required = (t === 'TF');
             identAnswer.required = (t === 'IDENTIFICATION');
@@ -162,7 +159,7 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
                 <option value="F">False</option>
             </select>
         </label>
-    <?php else: // IDENTIFICATION ?>
+    <?php else: ?>
         <label>Correct Answer: <input type="text" name="correct_answer" placeholder="Enter the correct answer text" required></label>
     <?php endif; ?>
     <button type="submit">Add Question</button>
@@ -176,14 +173,14 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
 <div class="bulk-upload-section">
     <p>Upload a CSV file to add multiple questions at once for this <?= $quiz['type'] === 'MCQ' ? 'Multiple Choice' : ($quiz['type'] === 'TF' ? 'True/False' : ($quiz['type'] === 'IDENTIFICATION' ? 'Identification' : 'Mixed')) ?> quiz.</p>
     <?php if ($quiz['type'] === 'MIXED'): ?>
-        <p style="font-size:0.9rem;color:#7f8c8d;">CSV columns: question_type, question_text, option_a, option_b, option_c, option_d, correct_answer<br>
+        <p class="csv-hint">CSV columns: question_type, question_text, option_a, option_b, option_c, option_d, correct_answer<br>
         question_type: MCQ / TF / IDENTIFICATION. For MCQ, correct_answer is A/B/C/D and all 4 options are required. For TF, correct_answer is T or F (options can be empty). For IDENTIFICATION, correct_answer is the text answer (options can be empty).</p>
     <?php elseif ($quiz['type'] === 'MCQ'): ?>
-        <p style="font-size:0.9rem;color:#7f8c8d;">CSV columns: question_text, option_a, option_b, option_c, option_d, correct_answer (A/B/C/D)</p>
+        <p class="csv-hint">CSV columns: question_text, option_a, option_b, option_c, option_d, correct_answer (A/B/C/D)</p>
     <?php elseif ($quiz['type'] === 'TF'): ?>
-        <p style="font-size:0.9rem;color:#7f8c8d;">CSV columns: question_text, option_a, option_b, option_c, option_d, correct_answer (T or F). Options can be left empty for True/False.</p>
+        <p class="csv-hint">CSV columns: question_text, option_a, option_b, option_c, option_d, correct_answer (T or F). Options can be left empty for True/False.</p>
     <?php else: ?>
-        <p style="font-size:0.9rem;color:#7f8c8d;">CSV columns: question_text, correct_answer. Options can be left empty.</p>
+        <p class="csv-hint">CSV columns: question_text, correct_answer. Options can be left empty.</p>
     <?php endif; ?>
     <div class="bulk-upload-buttons">
         <button type="button" class="btn-template" onclick="downloadQuestionTemplate()">Download Template</button>
@@ -203,7 +200,6 @@ if (!empty($parts)) echo '<p>Type: <strong>' . implode(' + ', $parts) . '</stron
 <div id="questionList">Loading...</div>
 
 <script>
-// Enable/disable the items input based on checkbox state (settings form)
 document.querySelectorAll('#quizSettings .type-group input[type="checkbox"]').forEach(function(cb) {
     cb.addEventListener('change', function() {
         var numInput = this.closest('.type-row').querySelector('input[type="number"]');
@@ -223,37 +219,44 @@ const quizId = <?= $quiz['quiz_id'] ?>;
 const quizType = '<?= $quiz['type'] ?>';
 
 async function loadQuestions() {
-    const resp = await fetch(`<?= BASE_URL ?>api/faculty/questions.php?quiz_id=${quizId}`);
-    const questions = await resp.json();
-    const container = document.getElementById('questionList');
-    if (!questions.length) {
-        container.innerHTML = '<p>No questions yet.</p>';
-        return;
+    try {
+        const questions = await fetchJson('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId);
+        const container = document.getElementById('questionList');
+        if (!questions.length) {
+            container.innerHTML = '<p>No questions yet.</p>';
+            return;
+        }
+        container.innerHTML = questions.map((q, i) => {
+            const typeLabel = quizType === 'MIXED'
+                ? ' <span class="q-type-badge">' + (q.question_type === 'MCQ' ? 'MCQ' : (q.question_type === 'TF' ? 'T/F' : 'Identification')) + '</span>'
+                : '';
+            return '<div class="question-item">' +
+                '<strong>' + (i + 1) + '. ' + escapeHtml(q.question_text) + typeLabel + '</strong>' +
+                (q.option_a ? '<br>A: ' + escapeHtml(q.option_a) : '') +
+                (q.option_b ? '<br>B: ' + escapeHtml(q.option_b) : '') +
+                (q.option_c ? '<br>C: ' + escapeHtml(q.option_c) : '') +
+                (q.option_d ? '<br>D: ' + escapeHtml(q.option_d) : '') +
+                '<br><button onclick="deleteQuestion(' + q.question_id + ')">Delete</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) {
+        document.getElementById('questionList').innerHTML = '<p style="color:red;">Failed to load questions.</p>';
     }
-    container.innerHTML = questions.map((q, i) => {
-        const typeLabel = quizType === 'MIXED'
-            ? ` <span style="font-size:0.8rem;background:#e2e8f0;padding:2px 8px;border-radius:4px;margin-left:6px;">${q.question_type === 'MCQ' ? 'MCQ' : (q.question_type === 'TF' ? 'T/F' : 'Identification')}</span>`
-            : '';
-        return `
-        <div class="question-item">
-            <strong>${i + 1}. ${q.question_text}${typeLabel}</strong>
-            ${q.option_a ? `<br>A: ${q.option_a}` : ''}
-            ${q.option_b ? `<br>B: ${q.option_b}` : ''}
-            ${q.option_c ? `<br>C: ${q.option_c}` : ''}
-            ${q.option_d ? `<br>D: ${q.option_d}` : ''}
-            <br><button onclick="deleteQuestion(${q.question_id})">Delete</button>
-        </div>
-    `}).join('');
 }
 
 async function deleteQuestion(qid) {
     if (!confirm('Delete this question?')) return;
-    await fetch('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, {
-        method: 'DELETE',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'question_id=' + qid
-    });
-    loadQuestions();
+    try {
+        var body = new URLSearchParams();
+        body.append('question_id', qid);
+        await fetchWithCsrf('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, {
+            method: 'DELETE',
+            body: body
+        });
+        loadQuestions();
+    } catch(e) {
+        alert(e.message);
+    }
 }
 
 document.getElementById('questionForm').addEventListener('submit', async (e) => {
@@ -261,12 +264,9 @@ document.getElementById('questionForm').addEventListener('submit', async (e) => 
     const form = new FormData(e.target);
     const quizType = document.getElementById('quizType').value;
 
-    // For MIXED quizzes, consolidate correct_answer from the visible field
-    // and set question_type for the API
     if (quizType === 'MIXED') {
         const qType = document.getElementById('questionTypeSelect').value;
         form.set('question_type', qType);
-        // The individual correct_answer fields have different names to avoid conflicts
         let correctAnswer;
         if (qType === 'MCQ') {
             correctAnswer = form.get('correct_answer_mcq');
@@ -277,28 +277,26 @@ document.getElementById('questionForm').addEventListener('submit', async (e) => 
         }
         form.set('correct_answer', correctAnswer);
     } else {
-        // Non-MIXED: question_type matches quiz type
         form.set('question_type', quizType);
     }
 
-    const resp = await fetch('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, {
-        method: 'POST',
-        body: form
-    });
-    const data = await resp.json();
-    const qMsg = document.getElementById('questionMsg');
-    if (data.success) {
+    try {
+        const data = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, {
+            method: 'POST',
+            body: form
+        });
+        const qMsg = document.getElementById('questionMsg');
         qMsg.textContent = 'Question added!';
         qMsg.style.color = 'green';
         e.target.reset();
-        // For MIXED quizzes, reset the field visibility
         if (quizType === 'MIXED') {
             document.getElementById('questionTypeSelect').dispatchEvent(new Event('change'));
         }
         loadQuestions();
         setTimeout(() => { qMsg.textContent = ''; }, 2000);
-    } else {
-        qMsg.textContent = data.error;
+    } catch(err) {
+        const qMsg = document.getElementById('questionMsg');
+        qMsg.textContent = err.message;
         qMsg.style.color = 'red';
     }
 });
@@ -309,11 +307,9 @@ document.getElementById('quizSettings').addEventListener('submit', async (e) => 
     var data = {};
     form.forEach(function(v, k) { data[k] = v; });
 
-    // is_active checkbox
     var checkbox = e.target.querySelector('input[name="is_active"]');
     data.is_active = checkbox.checked ? '1' : '0';
 
-    // Compute type from checked boxes and gather item counts
     var types = ['MCQ', 'TF', 'IDENTIFICATION'];
     var selected = {};
     var checkedCount = 0;
@@ -343,19 +339,19 @@ document.getElementById('quizSettings').addEventListener('submit', async (e) => 
     data.available_from = e.target.querySelector('input[name="available_from"]').value || '';
     data.available_until = e.target.querySelector('input[name="available_until"]').value || '';
 
-    const resp = await fetch('<?= BASE_URL ?>api/faculty/quizzes.php', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: new URLSearchParams(data).toString()
-    });
-    const result = await resp.json();
-    const sMsg = document.getElementById('settingsMsg');
-    if (result.success) {
+    try {
+        const result = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/quizzes.php', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams(data).toString()
+        });
+        const sMsg = document.getElementById('settingsMsg');
         sMsg.textContent = 'Settings saved!';
         sMsg.style.color = 'green';
         setTimeout(() => { sMsg.textContent = ''; }, 2000);
-    } else {
-        sMsg.textContent = result.error;
+    } catch(err) {
+        const sMsg = document.getElementById('settingsMsg');
+        sMsg.textContent = err.message;
         sMsg.style.color = 'red';
     }
 });
@@ -378,22 +374,26 @@ async function uploadQuestionCSV(input) {
     const formData = new FormData();
     formData.append('csv_file', file);
 
-    const resp = await fetch('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, { method: 'POST', body: formData });
-    const data = await resp.json();
-    uMsg.textContent = '';
+    try {
+        const data = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/questions.php?quiz_id=' + quizId, { method: 'POST', body: formData });
+        uMsg.textContent = '';
 
-    if (data.success) {
-        results.style.display = 'block';
-        let html = `<p style="color:green;font-weight:bold;">Imported: ${data.imported} | Skipped: ${data.skipped}</p>`;
-        if (data.errors.length > 0) {
-            html += '<details><summary>View errors (' + data.errors.length + ')</summary><ul style="color:red;font-size:0.9rem;">';
-            data.errors.forEach(e => html += `<li>${e}</li>`);
-            html += '</ul></details>';
+        if (data.success) {
+            results.style.display = 'block';
+            let html = '<p style="color:green;font-weight:bold;">Imported: ' + data.imported + ' | Skipped: ' + data.skipped + '</p>';
+            if (data.errors.length > 0) {
+                html += '<details><summary>View errors (' + data.errors.length + ')</summary><ul style="color:red;font-size:0.9rem;">';
+                data.errors.forEach(e => html += '<li>' + escapeHtml(e) + '</li>');
+                html += '</ul></details>';
+            }
+            results.innerHTML = html;
+            loadQuestions();
+        } else {
+            uMsg.textContent = data.error;
+            uMsg.style.color = 'red';
         }
-        results.innerHTML = html;
-        loadQuestions();
-    } else {
-        uMsg.textContent = data.error;
+    } catch(err) {
+        uMsg.textContent = err.message;
         uMsg.style.color = 'red';
     }
     input.value = '';

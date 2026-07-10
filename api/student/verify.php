@@ -10,6 +10,25 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+// --- Rate limiting on quiz code verification ---
+$clientIp = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+$rateKey = "verify_{$clientIp}";
+if (!isset($_SESSION[$rateKey])) {
+    $_SESSION[$rateKey] = ['count' => 0, 'window_start' => time()];
+}
+$rate = &$_SESSION[$rateKey];
+// Reset window if expired
+if (time() - $rate['window_start'] > VERIFY_RATE_WINDOW) {
+    $rate['count'] = 0;
+    $rate['window_start'] = time();
+}
+$rate['count']++;
+if ($rate['count'] > VERIFY_RATE_LIMIT) {
+    http_response_code(429);
+    echo json_encode(['error' => 'Too many attempts. Please try again later.']);
+    exit;
+}
+
 $studentId = trim($_POST['student_id'] ?? '');
 $quizCode  = trim($_POST['quiz_code'] ?? '');
 
@@ -57,7 +76,7 @@ if ($quiz['available_until'] && $now > $quiz['available_until']) {
 }
 
 // Check if student already has a submission for this quiz
-$stmt = $pdo->prepare("SELECT submission_id, submitted_at FROM submissions WHERE student_id = ? AND quiz_id = ?");
+$stmt = $pdo->prepare("SELECT submission_id, submitted_at, email_used FROM submissions WHERE student_id = ? AND quiz_id = ?");
 $stmt->execute([$studentId, $quiz['quiz_id']]);
 $existing = $stmt->fetch();
 
@@ -76,6 +95,7 @@ if ($existing) {
         'has_email'     => !empty($student['email']),
         'can_resume'    => true,
         'submission_id' => (int)$existing['submission_id'],
+        'email_used'    => $existing['email_used'],
     ]);
     exit;
 }

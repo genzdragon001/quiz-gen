@@ -43,23 +43,20 @@ header('Content-Disposition: attachment; filename="' . $filename . '"');
 
 $output = fopen('php://output', 'w');
 
+// --- Write header ONCE at the top for all quiz types ---
+if ($type === 'MIXED') {
+    fputcsv($output, ['question_type', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
+} else {
+    fputcsv($output, ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
+}
+
 // --- MCQ rows ---
 if ($type === 'MCQ' || $type === 'MIXED') {
     $count = $type === 'MCQ' ? max($numMcq, 1) : max($numMcq, 0);
-    if ($type === 'MIXED' && $numMcq > 0) {
-        // Header written once for mixed; write it before the first row of any type
-        // (handled below — we write header once at the top for MIXED)
-    }
     for ($i = 0; $i < $count; $i++) {
         $row = $type === 'MIXED'
             ? ['MCQ', "Sample MCQ question " . ($i + 1), 'Option A', 'Option B', 'Option C', 'Option D', 'A']
             : ["Sample MCQ question " . ($i + 1), 'Option A', 'Option B', 'Option C', 'Option D', 'A'];
-        if ($i === 0 && $type === 'MCQ') {
-            fputcsv($output, ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
-        }
-        if ($i === 0 && $type === 'MIXED') {
-            fputcsv($output, ['question_type', 'question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
-        }
         fputcsv($output, $row);
     }
 }
@@ -71,9 +68,6 @@ if ($type === 'TF' || $type === 'MIXED') {
         $row = $type === 'MIXED'
             ? ['TF', "Sample True/False question " . ($i + 1), '', '', '', '', 'T']
             : ["Sample True/False question " . ($i + 1), '', '', '', '', 'T'];
-        if ($i === 0 && $type === 'TF') {
-            fputcsv($output, ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
-        }
         fputcsv($output, $row);
     }
 }
@@ -85,9 +79,6 @@ if ($type === 'IDENTIFICATION' || $type === 'MIXED') {
         $row = $type === 'MIXED'
             ? ['IDENTIFICATION', "Sample identification question " . ($i + 1), '', '', '', '', "Sample answer " . ($i + 1)]
             : ["Sample identification question " . ($i + 1), '', '', '', '', "Sample answer " . ($i + 1)];
-        if ($i === 0 && $type === 'IDENTIFICATION') {
-            fputcsv($output, ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer']);
-        }
         fputcsv($output, $row);
     }
 }

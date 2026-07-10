@@ -23,6 +23,8 @@ if (!$quizId || !verifyQuizOwnership($pdo, $quizId, $faculty['faculty_id'])) {
 
 // CREATE question (single or bulk)
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCsrfToken();
+
     // Get quiz type once
     $stmt = $pdo->prepare("SELECT type FROM quizzes WHERE quiz_id = ?");
     $stmt->execute([$quizId]);
@@ -80,60 +82,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
 
-        while (($row = fgetcsv($handle)) !== false) {
-            $lineNum++;
-            $questionText  = trim($row[$colMap['question_text']] ?? '');
-            $correctAnswer = trim($row[$colMap['correct_answer']] ?? '');
-            $optionA = trim($row[$colMap['option_a'] ?? null] ?? '');
-            $optionB = trim($row[$colMap['option_b'] ?? null] ?? '');
-            $optionC = trim($row[$colMap['option_c'] ?? null] ?? '');
-            $optionD = trim($row[$colMap['option_d'] ?? null] ?? '');
+        $pdo->beginTransaction();
+        try {
+            while (($row = fgetcsv($handle)) !== false) {
+                $lineNum++;
+                $questionText  = trim($row[$colMap['question_text']] ?? '');
+                $correctAnswer = trim($row[$colMap['correct_answer']] ?? '');
+                $optionA = trim($row[$colMap['option_a'] ?? null] ?? '');
+                $optionB = trim($row[$colMap['option_b'] ?? null] ?? '');
+                $optionC = trim($row[$colMap['option_c'] ?? null] ?? '');
+                $optionD = trim($row[$colMap['option_d'] ?? null] ?? '');
 
-            // Determine question type
-            if ($quiz['type'] === 'MIXED') {
-                $qType = strtoupper(trim($row[$colMap['question_type']] ?? ''));
-            } else {
-                $qType = $quiz['type'];
-            }
+                // Determine question type
+                if ($quiz['type'] === 'MIXED') {
+                    $qType = strtoupper(trim($row[$colMap['question_type']] ?? ''));
+                } else {
+                    $qType = $quiz['type'];
+                }
 
-            if (empty($questionText) || empty($correctAnswer)) {
-                $errors[] = "Line $lineNum: missing question_text or correct_answer (skipped)";
-                $skipped++;
-                continue;
-            }
-
-            if (!in_array($qType, ['MCQ', 'TF', 'IDENTIFICATION'])) {
-                $errors[] = "Line $lineNum: invalid question_type '$qType', must be MCQ/TF/IDENTIFICATION (skipped)";
-                $skipped++;
-                continue;
-            }
-
-            // Validate answer format based on question type
-            if ($qType === 'TF') {
-                $correctAnswer = strtoupper($correctAnswer);
-                if (!in_array($correctAnswer, ['T', 'F'])) {
-                    $errors[] = "Line $lineNum: correct_answer must be T or F, got '$correctAnswer' (skipped)";
+                if (empty($questionText) || empty($correctAnswer)) {
+                    $errors[] = "Line $lineNum: missing question_text or correct_answer (skipped)";
                     $skipped++;
                     continue;
                 }
-            } elseif ($qType === 'MCQ') {
-                $correctAnswer = strtoupper($correctAnswer);
-                if (!in_array($correctAnswer, ['A', 'B', 'C', 'D'])) {
-                    $errors[] = "Line $lineNum: correct_answer must be A/B/C/D, got '$correctAnswer' (skipped)";
-                    $skipped++;
-                    continue;
-                }
-                if (empty($optionA) || empty($optionB) || empty($optionC) || empty($optionD)) {
-                    $errors[] = "Line $lineNum: MCQ requires all 4 options (A/B/C/D) (skipped)";
-                    $skipped++;
-                    continue;
-                }
-            }
-            // IDENTIFICATION: no format validation, accept any text
 
-            $sortOrder++;
-            $insertStmt->execute([$quizId, $qType, $questionText, $optionA, $optionB, $optionC, $optionD, $correctAnswer, $sortOrder]);
-            $imported++;
+                if (!in_array($qType, ['MCQ', 'TF', 'IDENTIFICATION'])) {
+                    $errors[] = "Line $lineNum: invalid question_type '$qType', must be MCQ/TF/IDENTIFICATION (skipped)";
+                    $skipped++;
+                    continue;
+                }
+
+                // Validate answer format based on question type
+                if ($qType === 'TF') {
+                    $correctAnswer = strtoupper($correctAnswer);
+                    if (!in_array($correctAnswer, ['T', 'F'])) {
+                        $errors[] = "Line $lineNum: correct_answer must be T or F, got '$correctAnswer' (skipped)";
+                        $skipped++;
+                        continue;
+                    }
+                } elseif ($qType === 'MCQ') {
+                    $correctAnswer = strtoupper($correctAnswer);
+                    if (!in_array($correctAnswer, ['A', 'B', 'C', 'D'])) {
+                        $errors[] = "Line $lineNum: correct_answer must be A/B/C/D, got '$correctAnswer' (skipped)";
+                        $skipped++;
+                        continue;
+                    }
+                    if (empty($optionA) || empty($optionB) || empty($optionC) || empty($optionD)) {
+                        $errors[] = "Line $lineNum: MCQ requires all 4 options (A/B/C/D) (skipped)";
+                        $skipped++;
+                        continue;
+                    }
+                }
+                // IDENTIFICATION: no format validation, accept any text
+
+                $sortOrder++;
+                $insertStmt->execute([$quizId, $qType, $questionText, $optionA, $optionB, $optionC, $optionD, $correctAnswer, $sortOrder]);
+                $imported++;
+            }
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            fclose($handle);
+            http_response_code(500);
+            echo json_encode(['error' => 'Import failed: ' . $e->getMessage()]);
+            exit;
         }
         fclose($handle);
 
@@ -214,6 +226,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // DELETE question
 if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
+    verifyCsrfToken();
+
     parse_str(file_get_contents("php://input"), $data);
     $questionId = (int)($data['question_id'] ?? 0);
 

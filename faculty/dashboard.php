@@ -57,12 +57,12 @@ $submissionCount = $stmt->fetchColumn();
                     $expired = $deadline < time();
                     $label = date('M j, Y g:i A', $deadline);
                     if ($expired) {
-                        echo '<span style="color:#e74c3c;font-weight:600;">' . htmlspecialchars($label) . ' (Expired)</span>';
+                        echo '<span class="deadline-expired">' . htmlspecialchars($label) . ' (Expired)</span>';
                     } else {
-                        echo '<span style="color:#27ae60;font-weight:600;">' . htmlspecialchars($label) . '</span>';
+                        echo '<span class="deadline-active">' . htmlspecialchars($label) . '</span>';
                     }
                 } else {
-                    echo '<span style="color:#7f8c8d;">No deadline</span>';
+                    echo '<span class="deadline-none">No deadline</span>';
                 }
                 ?>
             </td>
@@ -123,20 +123,15 @@ document.querySelectorAll('.delete-quiz').forEach(function(btn) {
         fd.append('quiz_id', quizId);
         var body = new URLSearchParams(fd);
 
-        fetch('<?= BASE_URL ?>api/faculty/quizzes.php', {
+        fetchWithCsrf('<?= BASE_URL ?>api/faculty/quizzes.php', {
             method: 'DELETE',
             body: body
         })
-        .then(function(r) { return r.json(); })
         .then(function(data) {
-            if (data.success) {
-                var row = btn.closest('tr');
-                if (row) row.remove();
-            } else {
-                alert(data.error || 'Failed to delete quiz');
-            }
+            var row = btn.closest('tr');
+            if (row) row.remove();
         })
-        .catch(function() { alert('Network error deleting quiz'); });
+        .catch(function(err) { alert(err.message); });
     });
 });
 </script>

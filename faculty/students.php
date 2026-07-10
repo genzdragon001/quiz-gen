@@ -5,6 +5,7 @@
 <!-- Add student form -->
 <h2>Add Student</h2>
 <form id="studentForm">
+    <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
     <label>Student ID: <input type="text" name="student_id" required></label>
     <label>Full Name: <input type="text" name="name" required></label>
     <label>Email: <input type="email" name="email"></label>
@@ -42,77 +43,117 @@
     <tbody id="studentTable"></tbody>
 </table>
 
+<!-- Edit Student Modal -->
+<div class="modal-overlay" id="editStudentModal" style="display:none;">
+    <div class="modal-box">
+        <div class="modal-header">
+            <h3>Edit Student</h3>
+            <span class="modal-close" onclick="closeEditModal()">&times;</span>
+        </div>
+        <form id="editStudentForm">
+            <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
+            <input type="hidden" name="student_id" id="editStudentId">
+            <label>Full Name <input type="text" name="name" id="editName" required></label>
+            <label>Email <input type="email" name="email" id="editEmail"></label>
+            <label>Year & Section <input type="text" name="year_section" id="editSection"></label>
+            <button type="submit">Save Changes</button>
+        </form>
+        <p id="editMsg" style="margin-top:0.5rem;"></p>
+    </div>
+</div>
+
 <script>
 async function loadStudents(search = '') {
-    const resp = await fetch(`<?= BASE_URL ?>api/faculty/students.php?search=${encodeURIComponent(search)}`);
-    const students = await resp.json();
-    document.getElementById('studentTable').innerHTML = students.map(s => `
-        <tr>
-            <td>${s.student_id}</td>
-            <td>${s.name}</td>
-            <td>${s.email || '-'}</td>
-            <td>${s.year_section || '-'}</td>
-            <td>
-                <button class="btn-sm btn-edit" data-sid="${s.student_id}" data-name="${s.name.replace(/"/g, '&quot;')}" data-email="${(s.email||'').replace(/"/g, '&quot;')}" data-section="${(s.year_section||'').replace(/"/g, '&quot;')}" onclick="editStudent(this)">Edit</button>
-                <button class="btn-sm btn-del" onclick="deleteStudent('${s.student_id}')">Delete</button>
-            </td>
-        </tr>
-    `).join('') || '<tr><td colspan="5">No students found.</td></tr>';
+    try {
+        const students = await fetchJson('<?= BASE_URL ?>api/faculty/students.php?search=' + encodeURIComponent(search));
+        document.getElementById('studentTable').innerHTML = students.map(s =>
+            '<tr>' +
+                '<td>' + escapeHtml(s.student_id) + '</td>' +
+                '<td>' + escapeHtml(s.name) + '</td>' +
+                '<td>' + escapeHtml(s.email || '-') + '</td>' +
+                '<td>' + escapeHtml(s.year_section || '-') + '</td>' +
+                '<td>' +
+                    '<button class="btn-sm btn-edit" onclick="openEditModal(\'' + escapeHtml(s.student_id) + '\', \'' + escapeHtml(s.name) + '\', \'' + escapeHtml(s.email || '') + '\', \'' + escapeHtml(s.year_section || '') + '\')">Edit</button> ' +
+                    '<button class="btn-sm btn-del" onclick="deleteStudent(\'' + escapeHtml(s.student_id) + '\')">Delete</button>' +
+                '</td>' +
+            '</tr>'
+        ).join('') || '<tr><td colspan="5">No students found.</td></tr>';
+    } catch(e) {
+        document.getElementById('studentTable').innerHTML = '<tr><td colspan="5" style="color:red;">Failed to load students.</td></tr>';
+    }
 }
 
 document.getElementById('studentForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = new FormData(e.target);
-    const resp = await fetch('<?= BASE_URL ?>api/faculty/students.php', { method: 'POST', body: form });
-    const data = await resp.json();
     const msg = document.getElementById('formMsg');
-    if (data.success) {
+    try {
+        await fetchWithCsrf('<?= BASE_URL ?>api/faculty/students.php', { method: 'POST', body: form });
         msg.textContent = 'Student added!';
         msg.style.color = 'green';
         e.target.reset();
         loadStudents();
         setTimeout(() => { msg.textContent = ''; }, 2000);
-    } else {
-        msg.textContent = data.error;
+    } catch(err) {
+        msg.textContent = err.message;
         msg.style.color = 'red';
     }
 });
 
-function editStudent(btn) {
-    const sid = btn.dataset.sid;
-    const name = btn.dataset.name;
-    const email = btn.dataset.email;
-    const section = btn.dataset.section;
-    // Simple inline edit via prompt
-    const newName = prompt('Full Name:', name);
-    if (newName === null) return;
-    const newEmail = prompt('Email:', email);
-    if (newEmail === null) return;
-    const newSection = prompt('Year & Section:', section);
-    if (newSection === null) return;
-
-    const data = new URLSearchParams({
-        student_id: sid,
-        name: newName,
-        email: newEmail,
-        year_section: newSection
-    });
-
-    fetch('<?= BASE_URL ?>api/faculty/students.php', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: data.toString()
-    }).then(() => loadStudents());
+// --- Edit Modal ---
+function openEditModal(sid, name, email, section) {
+    document.getElementById('editStudentId').value = sid;
+    document.getElementById('editName').value = name;
+    document.getElementById('editEmail').value = email;
+    document.getElementById('editSection').value = section;
+    document.getElementById('editMsg').textContent = '';
+    document.getElementById('editStudentModal').style.display = 'flex';
 }
 
+function closeEditModal() {
+    document.getElementById('editStudentModal').style.display = 'none';
+}
+
+document.getElementById('editStudentModal').addEventListener('click', function(e) {
+    if (e.target === this) closeEditModal();
+});
+
+document.getElementById('editStudentForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = new FormData(e.target);
+    const data = new URLSearchParams(form);
+    const msg = document.getElementById('editMsg');
+    try {
+        await fetchWithCsrf('<?= BASE_URL ?>api/faculty/students.php', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: data.toString()
+        });
+        msg.textContent = 'Student updated!';
+        msg.style.color = 'green';
+        loadStudents();
+        setTimeout(() => { closeEditModal(); }, 1000);
+    } catch(err) {
+        msg.textContent = err.message;
+        msg.style.color = 'red';
+    }
+});
+
 async function deleteStudent(sid) {
-    if (!confirm(`Delete student ${sid}? This also deletes their submissions.`)) return;
-    await fetch('<?= BASE_URL ?>api/faculty/students.php', {
-        method: 'DELETE',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'student_id=' + encodeURIComponent(sid)
-    });
-    loadStudents();
+    if (!confirm('Delete student ' + sid + '? This also deletes their submissions.')) return;
+    try {
+        const data = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/students.php', {
+            method: 'DELETE',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'student_id=' + encodeURIComponent(sid)
+        });
+        if (data.submissions_deleted > 0) {
+            alert('Student deleted along with ' + data.submissions_deleted + ' submission(s).');
+        }
+        loadStudents();
+    } catch(err) {
+        alert(err.message);
+    }
 }
 
 document.getElementById('searchBox').addEventListener('input', (e) => {
@@ -135,22 +176,26 @@ async function uploadCSV(input) {
     const formData = new FormData();
     formData.append('csv_file', file);
 
-    const resp = await fetch('<?= BASE_URL ?>api/faculty/students.php', { method: 'POST', body: formData });
-    const data = await resp.json();
-    msg.textContent = '';
+    try {
+        const data = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/students.php', { method: 'POST', body: formData });
+        msg.textContent = '';
 
-    if (data.success) {
-        results.style.display = 'block';
-        let html = `<p style="color:green;font-weight:bold;">Imported: ${data.imported} | Skipped: ${data.skipped}</p>`;
-        if (data.errors.length > 0) {
-            html += '<details><summary>View errors (' + data.errors.length + ')</summary><ul style="color:red;font-size:0.9rem;">';
-            data.errors.forEach(e => html += `<li>${e}</li>`);
-            html += '</ul></details>';
+        if (data.success) {
+            results.style.display = 'block';
+            let html = '<p style="color:green;font-weight:bold;">Imported: ' + data.imported + ' | Skipped: ' + data.skipped + '</p>';
+            if (data.errors.length > 0) {
+                html += '<details><summary>View errors (' + data.errors.length + ')</summary><ul style="color:red;font-size:0.9rem;">';
+                data.errors.forEach(e => html += '<li>' + escapeHtml(e) + '</li>');
+                html += '</ul></details>';
+            }
+            results.innerHTML = html;
+            loadStudents();
+        } else {
+            msg.textContent = data.error;
+            msg.style.color = 'red';
         }
-        results.innerHTML = html;
-        loadStudents();
-    } else {
-        msg.textContent = data.error;
+    } catch(err) {
+        msg.textContent = err.message;
         msg.style.color = 'red';
     }
     input.value = '';

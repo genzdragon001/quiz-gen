@@ -24,8 +24,21 @@ function generateUniqueQuizCode(PDO $pdo): int {
     exit;
 }
 
+// Validate availability window
+function validateAvailabilityWindow(?string $from, ?string $until): ?string {
+    if ($from && $until) {
+        $f = strtotime($from);
+        $u = strtotime($until);
+        if ($f === false || $u === false) return 'Invalid date format for availability window';
+        if ($f >= $u) return 'Available From must be earlier than Available Until';
+    }
+    return null;
+}
+
 // CREATE quiz
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCsrfToken();
+
     $title            = trim($_POST['title'] ?? '');
     $type             = $_POST['type'] ?? '';
     $timeLimitMinutes = (int)($_POST['time_limit_minutes'] ?? 30);
@@ -42,12 +55,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($timeLimitMinutes < 1 || $timeLimitMinutes > 600) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Time limit must be between 1 and 600 minutes']);
+        exit;
+    }
+
+    $dateError = validateAvailabilityWindow($availableFrom, $availableUntil);
+    if ($dateError) {
+        http_response_code(400);
+        echo json_encode(['error' => $dateError]);
+        exit;
+    }
+
     $quizCode = generateUniqueQuizCode($pdo);
 
-    $stmt = $pdo->prepare(
-        "INSERT INTO quizzes (quiz_code, faculty_id, title, type, num_mcq, num_tf, num_identification, time_limit_minutes, is_active, available_from, available_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    $stmt->execute([$quizCode, $faculty['faculty_id'], $title, $type, $numMcq, $numTf, $numIdent, $timeLimitMinutes, $isActive, $availableFrom, $availableUntil]);
+    try {
+        $stmt = $pdo->prepare(
+            "INSERT INTO quizzes (quiz_code, faculty_id, title, type, num_mcq, num_tf, num_identification, time_limit_minutes, is_active, available_from, available_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        );
+        $stmt->execute([$quizCode, $faculty['faculty_id'], $title, $type, $numMcq, $numTf, $numIdent, $timeLimitMinutes, $isActive, $availableFrom, $availableUntil]);
+    } catch (PDOException $e) {
+        // Duplicate quiz_code — retry once
+        if ($e->getCode() == 23000) {
+            $quizCode = generateUniqueQuizCode($pdo);
+            $stmt->execute([$quizCode, $faculty['faculty_id'], $title, $type, $numMcq, $numTf, $numIdent, $timeLimitMinutes, $isActive, $availableFrom, $availableUntil]);
+        } else {
+            throw $e;
+        }
+    }
 
     echo json_encode([
         'success'   => true,
@@ -59,6 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // UPDATE quiz (PUT)
 if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
+    verifyCsrfToken();
+
     parse_str(file_get_contents("php://input"), $data);
     $quizId            = (int)($data['quiz_id'] ?? 0);
     $title             = trim($data['title'] ?? '');
@@ -79,6 +117,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
         exit;
     }
 
+    if ($timeLimitMinutes < 1 || $timeLimitMinutes > 600) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Time limit must be between 1 and 600 minutes']);
+        exit;
+    }
+
+    $dateError = validateAvailabilityWindow($availableFrom, $availableUntil);
+    if ($dateError) {
+        http_response_code(400);
+        echo json_encode(['error' => $dateError]);
+        exit;
+    }
+
     $stmt = $pdo->prepare(
         "UPDATE quizzes SET title = ?, time_limit_minutes = ?, is_active = ?, num_mcq = ?, num_tf = ?, num_identification = ?, available_from = ?, available_until = ? WHERE quiz_id = ?"
     );
@@ -90,6 +141,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'PUT') {
 
 // DELETE quiz (DELETE)
 if ($_SERVER['REQUEST_METHOD'] === 'DELETE') {
+    verifyCsrfToken();
+
     parse_str(file_get_contents("php://input"), $data);
     $quizId = (int)($data['quiz_id'] ?? 0);
 

@@ -2,6 +2,7 @@
 
 <h1>Create New Quiz</h1>
 <form id="quizForm">
+    <input type="hidden" name="csrf_token" value="<?= csrf_token() ?>">
     <label>Title: <input type="text" name="title" required></label>
 
     <fieldset class="type-group">
@@ -20,9 +21,9 @@
         </div>
     </fieldset>
 
-    <label>Time Limit (minutes): <input type="number" name="time_limit_minutes" value="30" min="1" required></label>
-    <label>Available From: <input type="datetime-local" name="available_from"></label>
-    <label>Available Until: <input type="datetime-local" name="available_until"></label>
+    <label>Time Limit (minutes): <input type="number" name="time_limit_minutes" value="30" min="1" max="600" required></label>
+    <label>Available From: <input type="datetime-local" name="available_from"> <small>(Asia/Manila time)</small></label>
+    <label>Available Until: <input type="datetime-local" name="available_until"> <small>(Asia/Manila time)</small></label>
     <label><input type="checkbox" name="is_active"> Active (students can take it)</label>
     <button type="submit">Create Quiz</button>
 </form>
@@ -35,7 +36,7 @@ document.querySelectorAll('.type-group input[type="checkbox"]').forEach(function
         var numInput = this.closest('.type-row').querySelector('input[type="number"]');
         numInput.disabled = !this.checked;
         if (this.checked && parseInt(numInput.value, 10) === 0) {
-            numInput.value = 1; // default to 1 when first checked
+            numInput.value = 1;
         }
         if (!this.checked) {
             numInput.value = 0;
@@ -81,17 +82,17 @@ document.getElementById('quizForm').addEventListener('submit', async (e) => {
     form.set('num_tf', selected['TF'] || 0);
     form.set('num_identification', selected['IDENTIFICATION'] || 0);
 
-    var resp = await fetch('<?= BASE_URL ?>api/faculty/quizzes.php', { method: 'POST', body: form });
-    var data = await resp.json();
-    var msg = document.getElementById('msg');
-    if (data.success) {
+    try {
+        var data = await fetchWithCsrf('<?= BASE_URL ?>api/faculty/quizzes.php', { method: 'POST', body: form });
+        var msg = document.getElementById('msg');
         msg.textContent = 'Quiz created! Code: ' + (data.quiz_code || '') + ' — Redirecting to add questions...';
         msg.style.color = 'green';
         setTimeout(() => {
             window.location.href = 'quiz-edit.php?id=' + data.quiz_id;
         }, 1000);
-    } else {
-        msg.textContent = data.error;
+    } catch(err) {
+        var msg = document.getElementById('msg');
+        msg.textContent = err.message;
         msg.style.color = 'red';
     }
 });

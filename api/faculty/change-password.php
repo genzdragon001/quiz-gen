@@ -5,13 +5,14 @@ require_once __DIR__ . '/../../includes/auth.php';
 
 $faculty = requireFaculty();
 header('Content-Type: application/json');
-$pdo = getDB();
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
     exit;
 }
+
+verifyCsrfToken();
 
 $currentPassword = $_POST['current_password'] ?? '';
 $newPassword     = $_POST['new_password'] ?? '';
@@ -29,11 +30,20 @@ if ($newPassword !== $confirmPassword) {
     exit;
 }
 
-if (strlen($newPassword) < 6) {
+if (strlen($newPassword) < 8) {
     http_response_code(400);
-    echo json_encode(['error' => 'New password must be at least 6 characters']);
+    echo json_encode(['error' => 'New password must be at least 8 characters']);
     exit;
 }
+
+// Require at least letters and numbers
+if (!preg_match('/[A-Za-z]/', $newPassword) || !preg_match('/[0-9]/', $newPassword)) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Password must contain both letters and numbers']);
+    exit;
+}
+
+$pdo = getDB();
 
 // Verify current password
 $stmt = $pdo->prepare("SELECT password_hash FROM faculty WHERE faculty_id = ?");

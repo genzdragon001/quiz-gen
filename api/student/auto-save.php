@@ -14,6 +14,7 @@ $submissionId    = (int)($_POST['submission_id'] ?? 0);
 $answersJson     = $_POST['answers'] ?? '{}';
 $violations      = (int)($_POST['violations'] ?? 0);
 $currentQuestion = (int)($_POST['current_question'] ?? 0);
+$studentId       = trim($_POST['student_id'] ?? '');
 
 if (!$submissionId) {
     http_response_code(400);
@@ -29,8 +30,8 @@ if (!is_array($answers)) {
 
 $pdo = getDB();
 
-// Verify submission exists and is not yet submitted
-$stmt = $pdo->prepare("SELECT submitted_at FROM submissions WHERE submission_id = ?");
+// Verify submission exists, is not yet submitted, AND belongs to the requesting student
+$stmt = $pdo->prepare("SELECT submitted_at, student_id FROM submissions WHERE submission_id = ?");
 $stmt->execute([$submissionId]);
 $submission = $stmt->fetch();
 
@@ -43,6 +44,13 @@ if (!$submission) {
 if ($submission['submitted_at']) {
     http_response_code(409);
     echo json_encode(['error' => 'Already submitted']);
+    exit;
+}
+
+// Identity verification: if student_id is provided, it must match
+if (!empty($studentId) && $submission['student_id'] !== $studentId) {
+    http_response_code(403);
+    echo json_encode(['error' => 'Access denied']);
     exit;
 }
 

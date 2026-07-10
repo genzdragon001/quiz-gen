@@ -37,8 +37,8 @@ $prefillCode = isset($_GET['code']) ? preg_replace('/[^0-9]/', '', $_GET['code']
                 <li>Right-click, copy, paste, and cut are disabled.</li>
                 <li>Keyboard shortcuts (Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+U, F12, DevTools) are blocked.</li>
                 <li>Switching tabs or leaving the quiz window counts as a violation.</li>
-                <li>You are allowed a maximum of 3 tab-switch violations.</li>
-                <li>On the 3rd violation, your quiz will be automatically submitted and flagged.</li>
+                <li>You are allowed a maximum of <?= MAX_VIOLATIONS ?> tab-switch violations.</li>
+                <li>On the <?= MAX_VIOLATIONS ?>rd violation, your quiz will be automatically submitted and flagged.</li>
                 <li>A timer runs during the quiz &mdash; it auto-submits when time is up.</li>
                 <li>If you lose connection or accidentally close the tab, you can resume from where you left off (as long as time hasn't expired and you haven't exhausted violations).</li>
             </ul>
@@ -90,7 +90,6 @@ agreeCheckbox.addEventListener('change', function() {
         agreeCheckbox.disabled = true;
 
         document.getElementById('resumeBtn').addEventListener('click', function() {
-            // Store the resume info in sessionStorage — email.php and quiz.php will use it
             sessionStorage.setItem('student', JSON.stringify({ student_id: foundData.studentId }));
             sessionStorage.setItem('quiz', JSON.stringify({ quiz_id: foundData.quizId }));
             sessionStorage.setItem('email', foundData.email);
@@ -112,26 +111,45 @@ agreeCheckbox.addEventListener('change', function() {
 document.getElementById('verifyForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = new FormData(e.target);
-    const resp = await fetch('<?= BASE_URL ?>api/student/verify.php', { method: 'POST', body: form });
-    const data = await resp.json();
+    const err = document.getElementById('error');
 
-    if (data.success) {
-        sessionStorage.setItem('student', JSON.stringify(data.student));
-        sessionStorage.setItem('quiz', JSON.stringify(data.quiz));
-
-        if (data.can_resume) {
-            // Server says there's an in-progress submission — go directly to quiz
-            sessionStorage.setItem('submission_id', data.submission_id);
-            sessionStorage.setItem('resuming', '1');
-            window.location.href = 'quiz.php';
-        } else {
-            sessionStorage.removeItem('submission_id');
-            sessionStorage.removeItem('resuming');
-            window.location.href = 'email.php';
+    try {
+        const resp = await fetch('<?= BASE_URL ?>api/student/verify.php', { method: 'POST', body: form });
+        if (!resp.ok) {
+            const data = await resp.json();
+            err.textContent = data.error || 'Verification failed';
+            err.style.display = 'block';
+            return;
         }
-    } else {
-        const err = document.getElementById('error');
-        err.textContent = data.error;
+        const data = await resp.json();
+
+        if (data.success) {
+            sessionStorage.setItem('student', JSON.stringify(data.student));
+            sessionStorage.setItem('quiz', JSON.stringify(data.quiz));
+
+            if (data.can_resume) {
+                sessionStorage.setItem('submission_id', data.submission_id);
+                sessionStorage.setItem('resuming', '1');
+                // Set email from the existing submission so quiz.js doesn't redirect
+                sessionStorage.setItem('email', data.email_used || data.student.email || '');
+                window.location.href = 'quiz.php';
+            } else {
+                sessionStorage.removeItem('submission_id');
+                sessionStorage.removeItem('resuming');
+                // Skip email page if student already has email in DB
+                if (data.has_email && data.student && data.student.email) {
+                    sessionStorage.setItem('email', data.student.email);
+                    window.location.href = 'quiz.php';
+                } else {
+                    window.location.href = 'email.php';
+                }
+            }
+        } else {
+            err.textContent = data.error;
+            err.style.display = 'block';
+        }
+    } catch(ex) {
+        err.textContent = 'Network error. Please try again.';
         err.style.display = 'block';
     }
 });

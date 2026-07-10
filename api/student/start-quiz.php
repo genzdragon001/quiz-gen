@@ -65,11 +65,76 @@ if ($quiz['available_until'] && $now > $quiz['available_until']) {
     exit;
 }
 
+// Helper: reorder questions by a stored question_order JSON array
+function reorderQuestions(array $questions, ?string $orderJson): array {
+    if (empty($orderJson)) return $questions;
+    $orderIds = json_decode($orderJson, true);
+    if (!is_array($orderIds)) return $questions;
+
+    // Build a map of question_id => question data
+    $map = [];
+    foreach ($questions as $q) {
+        $map[$q['question_id']] = $q;
+    }
+
+    // Reorder according to stored order; append any missing questions at the end
+    $result = [];
+    foreach ($orderIds as $qid) {
+        if (isset($map[$qid])) {
+            $result[] = $map[$qid];
+            unset($map[$qid]);
+        }
+    }
+    foreach ($map as $q) {
+        $result[] = $q;
+    }
+    return $result;
+}
+
+// Helper: build resume response
+function buildResumeResponse(PDO $pdo, array $existing, array $quiz, int $quizId): void {
+    $draftAnswers = json_decode($existing['draft_answers'] ?? '{}', true);
+    if (!is_array($draftAnswers)) $draftAnswers = [];
+
+    $now = time();
+    $timeRemaining = 0;
+    if (!empty($existing['deadline'])) {
+        $timeRemaining = max(0, strtotime($existing['deadline']) - $now);
+    } else {
+        // Fallback for submissions without deadline (created before this feature)
+        $timeRemaining = (int)$quiz['time_limit_minutes'] * 60;
+    }
+
+    // Get questions WITHOUT correct_answer
+    $stmt = $pdo->prepare(
+        "SELECT question_id, question_type, question_text, option_a, option_b, option_c, option_d, sort_order
+         FROM questions WHERE quiz_id = ? ORDER BY sort_order"
+    );
+    $stmt->execute([$quizId]);
+    $questions = $stmt->fetchAll();
+
+    // Reorder questions to match the shuffled order stored when the quiz was started
+    $questions = reorderQuestions($questions, $existing['question_order'] ?? null);
+
+    echo json_encode([
+        'success'          => true,
+        'resumed'          => true,
+        'submission_id'    => (int)$existing['submission_id'],
+        'quiz'             => $quiz,
+        'questions'        => $questions,
+        'draft_answers'    => $draftAnswers,
+        'current_question' => (int)$existing['current_question'],
+        'violations'       => (int)$existing['violations'],
+        'time_remaining'   => $timeRemaining,
+    ]);
+    exit;
+}
+
 // ----- RESUME MODE -----
 // If a submission_id is provided, resume that unsubmitted submission
 if ($resumeSubmissionId) {
     $stmt = $pdo->prepare(
-        "SELECT submission_id, submitted_at, draft_answers, current_question, violations, deadline
+        "SELECT submission_id, submitted_at, draft_answers, current_question, violations, deadline, question_order
          FROM submissions WHERE submission_id = ? AND student_id = ? AND quiz_id = ?"
     );
     $stmt->execute([$resumeSubmissionId, $studentId, $quizId]);
@@ -101,17 +166,28 @@ if ($resumeSubmissionId) {
 
         $score = 0;
         $total = count($questions);
-        $insertStmt = $pdo->prepare("INSERT INTO answers (submission_id, question_id, student_answer, is_correct) VALUES (?, ?, ?, ?)");
 
-        foreach ($questions as $q) {
-            $studentAnswer = $draftAnswers[$q['question_id']] ?? null;
-            $isCorrect = ($studentAnswer !== null && strtolower(trim($studentAnswer)) === strtolower(trim($q['correct_answer']))) ? 1 : 0;
-            if ($isCorrect) $score++;
-            $insertStmt->execute([$resumeSubmissionId, $q['question_id'], $studentAnswer, $isCorrect]);
+        $pdo->beginTransaction();
+        try {
+            $insertStmt = $pdo->prepare("INSERT INTO answers (submission_id, question_id, student_answer, is_correct) VALUES (?, ?, ?, ?)");
+
+            foreach ($questions as $q) {
+                $studentAnswer = $draftAnswers[$q['question_id']] ?? null;
+                $isCorrect = ($studentAnswer !== null && strtolower(trim($studentAnswer)) === strtolower(trim($q['correct_answer']))) ? 1 : 0;
+                if ($isCorrect) $score++;
+                $insertStmt->execute([$resumeSubmissionId, $q['question_id'], $studentAnswer, $isCorrect]);
+            }
+
+            $stmt = $pdo->prepare("UPDATE submissions SET score = ?, total_items = ?, submitted_at = NOW(), violations = ?, flagged = ?, draft_answers = NULL WHERE submission_id = ?");
+            $stmt->execute([$score, $total, (int)$existing['violations'], 0, $resumeSubmissionId]);
+
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            http_response_code(500);
+            echo json_encode(['error' => 'Failed to auto-submit expired quiz']);
+            exit;
         }
-
-        $stmt = $pdo->prepare("UPDATE submissions SET score = ?, total_items = ?, submitted_at = NOW(), violations = ?, flagged = ? WHERE submission_id = ?");
-        $stmt->execute([$score, $total, (int)$existing['violations'], 0, $resumeSubmissionId]);
 
         echo json_encode([
             'success'     => true,
@@ -123,44 +199,12 @@ if ($resumeSubmissionId) {
     }
 
     // Valid resume — return saved state
-    $draftAnswers = json_decode($existing['draft_answers'] ?? '{}', true);
-    if (!is_array($draftAnswers)) $draftAnswers = [];
-
-    // Compute remaining time from deadline
-    $timeRemaining = 0;
-    if ($deadline) {
-        $remaining = strtotime($deadline) - time();
-        $timeRemaining = max(0, $remaining);
-    } else {
-        // Fallback for submissions without deadline (created before this feature)
-        $timeRemaining = (int)$quiz['time_limit_minutes'] * 60;
-    }
-
-    // Get questions WITHOUT correct_answer
-    $stmt = $pdo->prepare(
-        "SELECT question_id, question_type, question_text, option_a, option_b, option_c, option_d, sort_order
-         FROM questions WHERE quiz_id = ? ORDER BY sort_order"
-    );
-    $stmt->execute([$quizId]);
-    $questions = $stmt->fetchAll();
-
-    echo json_encode([
-        'success'        => true,
-        'resumed'        => true,
-        'submission_id'  => (int)$existing['submission_id'],
-        'quiz'           => $quiz,
-        'questions'      => $questions,
-        'draft_answers'  => $draftAnswers,
-        'current_question' => (int)$existing['current_question'],
-        'violations'     => (int)$existing['violations'],
-        'time_remaining' => $timeRemaining,
-    ]);
-    exit;
+    buildResumeResponse($pdo, $existing, $quiz, $quizId);
 }
 
 // ----- NEW SUBMISSION MODE -----
 // Check for existing submission
-$stmt = $pdo->prepare("SELECT submission_id, submitted_at FROM submissions WHERE student_id = ? AND quiz_id = ?");
+$stmt = $pdo->prepare("SELECT submission_id, submitted_at, draft_answers, current_question, violations, deadline, question_order FROM submissions WHERE student_id = ? AND quiz_id = ?");
 $stmt->execute([$studentId, $quizId]);
 $existing = $stmt->fetch();
 
@@ -171,69 +215,19 @@ if ($existing) {
         exit;
     }
     // Unsubmitted exists — resume it instead of creating a duplicate
-    $resumeSubmissionId = (int)$existing['submission_id'];
-    // Fall through to resume logic by re-processing
-    $stmt = $pdo->prepare(
-        "SELECT submission_id, submitted_at, draft_answers, current_question, violations, deadline
-         FROM submissions WHERE submission_id = ?"
-    );
-    $stmt->execute([$resumeSubmissionId]);
-    $row = $stmt->fetch();
-
-    $draftAnswers = json_decode($row['draft_answers'] ?? '{}', true);
-    if (!is_array($draftAnswers)) $draftAnswers = [];
-
-    $timeRemaining = 0;
-    if ($row['deadline']) {
-        $timeRemaining = max(0, strtotime($row['deadline']) - time());
-    } else {
-        // No deadline set — set one now based on current time + time_limit
+    // Set a deadline if one doesn't exist yet
+    if (empty($existing['deadline'])) {
         $deadline = date('Y-m-d H:i:s', time() + (int)$quiz['time_limit_minutes'] * 60);
         $stmt = $pdo->prepare("UPDATE submissions SET deadline = ? WHERE submission_id = ?");
-        $stmt->execute([$deadline, $resumeSubmissionId]);
-        $timeRemaining = (int)$quiz['time_limit_minutes'] * 60;
+        $stmt->execute([$deadline, $existing['submission_id']]);
+        $existing['deadline'] = $deadline;
     }
 
-    $stmt = $pdo->prepare(
-        "SELECT question_id, question_type, question_text, option_a, option_b, option_c, option_d, sort_order
-         FROM questions WHERE quiz_id = ? ORDER BY sort_order"
-    );
-    $stmt->execute([$quizId]);
-    $questions = $stmt->fetchAll();
-
-    echo json_encode([
-        'success'        => true,
-        'resumed'        => true,
-        'submission_id'  => $resumeSubmissionId,
-        'quiz'           => $quiz,
-        'questions'      => $questions,
-        'draft_answers'  => $draftAnswers,
-        'current_question' => (int)$row['current_question'],
-        'violations'     => (int)$row['violations'],
-        'time_remaining' => $timeRemaining,
-    ]);
-    exit;
-}
-
-// Count questions
-$stmt = $pdo->prepare("SELECT COUNT(*) FROM questions WHERE quiz_id = ?");
-$stmt->execute([$quizId]);
-$totalItems = (int)$stmt->fetchColumn();
-
-if ($totalItems === 0) {
-    http_response_code(400);
-    echo json_encode(['error' => 'This quiz has no questions yet']);
-    exit;
+    buildResumeResponse($pdo, $existing, $quiz, $quizId);
 }
 
 // Create submission record with deadline
 $deadline = date('Y-m-d H:i:s', time() + (int)$quiz['time_limit_minutes'] * 60);
-$stmt = $pdo->prepare(
-    "INSERT INTO submissions (student_id, quiz_id, email_used, total_items, started_at, deadline)
-     VALUES (?, ?, ?, ?, NOW(), ?)"
-);
-$stmt->execute([$studentId, $quizId, $email, $totalItems, $deadline]);
-$submissionId = $pdo->lastInsertId();
 
 // Get questions WITHOUT correct_answer
 $stmt = $pdo->prepare(
@@ -242,6 +236,27 @@ $stmt = $pdo->prepare(
 );
 $stmt->execute([$quizId]);
 $questions = $stmt->fetchAll();
+
+if (count($questions) === 0) {
+    http_response_code(400);
+    echo json_encode(['error' => 'This quiz has no questions yet']);
+    exit;
+}
+
+// Shuffle questions so each student gets a different order
+shuffle($questions);
+
+// Store the shuffled question order as a JSON array of question_ids
+$questionOrder = json_encode(array_column($questions, 'question_id'));
+
+$totalItems = count($questions);
+
+$stmt = $pdo->prepare(
+    "INSERT INTO submissions (student_id, quiz_id, email_used, total_items, started_at, deadline, question_order)
+     VALUES (?, ?, ?, ?, NOW(), ?, ?)"
+);
+$stmt->execute([$studentId, $quizId, $email, $totalItems, $deadline, $questionOrder]);
+$submissionId = $pdo->lastInsertId();
 
 echo json_encode([
     'success'       => true,

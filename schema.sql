@@ -28,7 +28,7 @@ CREATE TABLE students (
 -- Quizzes
 CREATE TABLE quizzes (
     quiz_id            INT AUTO_INCREMENT PRIMARY KEY,
-    quiz_code          INT(4) UNSIGNED DEFAULT NULL UNIQUE COMMENT '4-digit code students use to join',
+    quiz_code          INT UNSIGNED DEFAULT NULL UNIQUE COMMENT '4-digit code students use to join',
     faculty_id         INT NOT NULL,
     title              VARCHAR(200) NOT NULL,
     type             ENUM('MCQ','TF','IDENTIFICATION','MIXED') NOT NULL,
@@ -40,7 +40,8 @@ CREATE TABLE quizzes (
     available_from     DATETIME DEFAULT NULL COMMENT 'when students can start taking the quiz',
     available_until    DATETIME DEFAULT NULL COMMENT 'when the quiz expires',
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id) ON DELETE CASCADE
+    FOREIGN KEY (faculty_id) REFERENCES faculty(faculty_id) ON DELETE CASCADE,
+    INDEX idx_quiz_code (quiz_code)
 ) ENGINE=InnoDB;
 
 -- Questions (correct_answer is NEVER sent to student browser)
@@ -74,9 +75,11 @@ CREATE TABLE submissions (
     flagged       TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'auto-submitted due to violations',
     draft_answers JSON DEFAULT NULL COMMENT 'saved answers for resume: {"question_id":"answer"}',
     current_question INT DEFAULT 0 COMMENT 'last-viewed question index for resume',
+    question_order JSON DEFAULT NULL COMMENT 'JSON array of question_ids in shuffled presentation order',
     deadline      DATETIME DEFAULT NULL COMMENT 'started_at + time_limit; used for server-side timer on resume',
     FOREIGN KEY (student_id) REFERENCES students(student_id) ON DELETE CASCADE,
-    FOREIGN KEY (quiz_id) REFERENCES quizzes(quiz_id) ON DELETE CASCADE
+    FOREIGN KEY (quiz_id) REFERENCES quizzes(quiz_id) ON DELETE CASCADE,
+    INDEX idx_sub_student_quiz (student_id, quiz_id)
 ) ENGINE=InnoDB;
 
 -- Individual answers
@@ -86,6 +89,17 @@ CREATE TABLE answers (
     question_id    INT NOT NULL,
     student_answer VARCHAR(500) DEFAULT NULL COMMENT 'NULL = unanswered',
     is_correct     TINYINT(1) NOT NULL DEFAULT 0,
+    -- Manual regrade: faculty can override identification correctness
+    manually_regraded TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = faculty overrode auto-grade',
     FOREIGN KEY (submission_id) REFERENCES submissions(submission_id) ON DELETE CASCADE,
     FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Brute-force protection on faculty login
+CREATE TABLE login_attempts (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    email           VARCHAR(150) NOT NULL,
+    attempt_count   INT NOT NULL DEFAULT 1,
+    last_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_email (email)
 ) ENGINE=InnoDB;

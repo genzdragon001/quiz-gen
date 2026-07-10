@@ -1,0 +1,20 @@
+# Block direct browser access to sensitive directories
+# Place this in the project root
+
+# Deny access to config directory
+RewriteEngine On
+RewriteRule ^config/ - [F,L]
+
+# Deny access to includes directory
+RewriteRule ^includes/ - [F,L]
+
+# Deny access to migrations directory
+RewriteRule ^migrations/ - [F,L]
+
+# Deny access to vendor directory (Composer deps should not be web-accessible)
+RewriteRule ^vendor/ - [F,L]
+
+# Block access to sensitive files
+<FilesMatch "(^\.|composer\.(json|lock)|schema\.sql|seed\.php|.*\.sql)">
+    Require all denied
+</FilesMatch>
