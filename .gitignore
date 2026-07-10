@@ -3,6 +3,7 @@ vendor/
 
 # Sensitive config (use config.example.php as template)
 config/config.php
+config/database.php
 
 # Logs (may contain student data)
 logs/
