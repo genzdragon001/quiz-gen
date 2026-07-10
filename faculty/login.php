@@ -16,7 +16,7 @@ $timeoutMsg = isset($_GET['reason']) && $_GET['reason'] === 'timeout'
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Faculty Login — <?= APP_NAME ?></title>
-    <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css">
+    <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
 <body>
 <div class="login-container">

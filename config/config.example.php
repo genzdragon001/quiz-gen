@@ -20,6 +20,17 @@ define('MAX_VIOLATIONS', 3);  // tab-switch strikes before auto-submit
 // Session
 ini_set('session.cookie_httponly', 1);
 ini_set('session.use_only_cookies', 1);
+ini_set('session.gc_maxlifetime', 7200);
+if (version_compare(PHP_VERSION, '7.3.0', '>=')) {
+    session_set_cookie_params([
+        'lifetime' => 7200,
+        'path'     => '/',
+        'httponly'  => true,
+        'samesite'  => 'Lax',
+    ]);
+} else {
+    session_set_cookie_params(7200, '/', '', false, true);
+}
 session_start();
 
 // Set timezone to Asia/Manila (matches DB server)

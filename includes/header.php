@@ -9,7 +9,7 @@ $csrf = csrf_token();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= APP_NAME ?> — Faculty</title>
-    <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css">
+    <link rel="stylesheet" href="<?= BASE_URL ?>assets/css/style.css?v=<?= filemtime(__DIR__ . '/../assets/css/style.css') ?>">
 </head>
 <body>
 <nav class="faculty-nav">
